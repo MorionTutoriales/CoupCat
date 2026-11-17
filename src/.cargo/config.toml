@@ -1,0 +1,24 @@
+# CoupCat — local Windows build configuration (MSVC).
+#
+# Build from a Visual Studio Developer shell so cl.exe/link.exe and the MSVC
+# headers (INCLUDE) are on PATH — needed for FFmpeg's .lib, ONNX Runtime, and
+# whisper.cpp. In PowerShell:
+#
+#     $vc = "C:\Program Files\Microsoft Visual Studio\2022\Community"
+#     Import-Module (Join-Path $vc "Common7\Tools\Microsoft.VisualStudio.DevShell.dll")
+#     Enter-VsDevShell -VsInstallPath $vc -SkipAutomaticLocation -DevCmdArguments "-arch=x64 -host_arch=x64"
+#     cd src; cargo build -p coupcat-desktop
+#
+# The pinned toolchain (rust-toolchain.toml → 1.93.1) resolves to the MSVC host.
+# Do NOT run cargo for linking crates from Git Bash: its /usr/bin/link shadows
+# MSVC's link.exe.
+#
+# These env vars are set here so a plain cargo invocation finds them; they do
+# NOT override values already in your shell.
+
+[env]
+# FFmpeg shared dev build (BtbN), with include/ + lib/ (MSVC .lib import libs).
+FFMPEG_DIR = "D:/Proyectos/Claude/CapCraft/third_party/ffmpeg/ffmpeg-master-latest-win64-gpl-shared"
+# libclang for bindgen (ffmpeg-sys). Doxygen's; it finds system headers via the
+# Dev Shell's INCLUDE (MSVC's stddef.h etc.), so no extra clang args are needed.
+LIBCLANG_PATH = "C:/Program Files/doxygen/bin"

@@ -1,0 +1,45 @@
+[package]
+name = "coupcat-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "CoupCat's desktop app: a Dioxus shell over the Concat engine (M1)."
+
+[[bin]]
+name = "coupcat"
+path = "src/main.rs"
+
+[build-dependencies]
+# Embed the app icon into the exe (shown in Explorer / the taskbar).
+winresource = "0.1"
+
+[dependencies]
+# UI: native desktop (webview) renderer. CoupCat's PC + Web target.
+dioxus = { version = "0.6", features = ["desktop"] }
+# Native file-open dialog for importing clips.
+rfd = "0.15"
+# Preview/playback frames are shown as embedded JPEG data URLs (M1 path; the
+# wgpu compositor comes in at M2/M3).
+base64 = "0.22"
+# Decode the embedded app icon PNG for the window icon.
+png = "0.17"
+# The UI polls the playback thread's shared snapshot on a timer.
+tokio = { version = "1", features = ["time"] }
+# Audio output for the preview (plays the audible clip's sound on play).
+cpal = "0.16"
+# The engine.
+concat-core.workspace = true
+concat-media.workspace = true
+concat-project.workspace = true
+concat-export.workspace = true
+concat-effects.workspace = true
+concat-text.workspace = true
+# Background removal (person cutout): on-device inference via ONNX Runtime,
+# loaded dynamically at runtime (see workspace ort = load-dynamic).
+concat-vision = { workspace = true, features = ["infer"] }
+# Auto-captions: whisper.cpp in-process (built from source by CMake; needs the
+# MSVC toolchain). Used directly rather than via concat-speech to avoid its
+# concat-host + sherpa-onnx dependencies.
+whisper-rs = "0.16"

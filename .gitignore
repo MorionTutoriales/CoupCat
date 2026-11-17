@@ -1,0 +1,15 @@
+*~
+/target
+/target-*/
+/dist
+/src/target
+/src/vendor
+# Local FFmpeg shared dev build (BtbN) and other fetched native SDKs. Large,
+# machine-specific; see README (CoupCat on Windows).
+/third_party/
+.DS_Store
+.claude/
+local.properties
+.gradle/
+.kotlin/
+build/

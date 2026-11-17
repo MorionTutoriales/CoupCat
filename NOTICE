@@ -1,0 +1,31 @@
+CoupCat
+Copyright (c) 2026 the CoupCat contributors.
+
+CoupCat is a free, open-source desktop video editor. It is a derivative work:
+its editing engine (the crates under src/crates/concat-*) comes from CapCraft
+for Android (https://github.com/artcraft-android/capcraft-android), which is
+itself built on Concat (https://github.com/jub0t/concat).
+
+  - The reused engine crates (src/crates/concat-*) are copyright Jareer Abdullah
+    and the Concat contributors.
+  - CapCraft for Android is copyright the ArtCraft Team and the CapCraft
+    contributors.
+  - CoupCat's own code — the desktop application in src/crates/coupcat-desktop,
+    the build/packaging scripts and project files — is copyright the CoupCat
+    contributors.
+
+All of it is licensed under the GNU Affero General Public License, version 3 or
+(at your option) any later version — see LICENSE. CoupCat keeps the upstream
+authors' copyright and license intact, as the AGPL requires, and releases its
+own additions under the same license.
+
+CoupCat is an independent project. It is not affiliated with or endorsed by
+ArtCraft, the Concat project, ByteDance or CapCut. The Android application and
+the phone build scripts from the upstream repository are not part of CoupCat.
+
+Significant changes from the upstream engine (a new Dioxus desktop UI, the move
+to the MSVC/Windows toolchain, background removal and captions wiring, and more)
+are recorded in the Git history and summarized in README.md.
+
+Third-party notices (FFmpeg, ONNX Runtime, whisper.cpp, fonts, models and more)
+are in THIRD_PARTY_NOTICES.md.
