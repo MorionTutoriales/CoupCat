@@ -119,6 +119,8 @@ fn app() -> Element {
     let mut pos = use_signal(|| 0.0_f64);
     let mut dur = use_signal(|| 0.0_f64);
     let mut playing = use_signal(|| false);
+    // True while the user is dragging the timeline playhead to scrub.
+    let mut scrubbing = use_signal(|| false);
     let mut loading = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
@@ -203,13 +205,15 @@ fn app() -> Element {
                                         .iter()
                                         .map(|c| (c.start, c.end, c.text.clone()))
                                         .collect();
-                                    let n = editor::add_captions(&mut project.borrow_mut(), &tuples);
+                                    let n =
+                                        editor::add_captions(&mut project.borrow_mut(), &tuples);
                                     timeline.set(editor::view(&project.borrow()));
                                     if let Some(d) = monitor::timeline_data(&project.borrow()) {
                                         monitor.send(Cmd::SetTimeline(d));
                                     }
                                     if n == 0 {
-                                        error.set(Some("No se detectó voz en el clip.".to_string()));
+                                        error
+                                            .set(Some("No se detectó voz en el clip.".to_string()));
                                     }
                                 }
                                 Some(Err(e)) => error.set(Some(format!("Subtítulos: {e}"))),
@@ -322,7 +326,10 @@ fn app() -> Element {
                 let Some(files) = rfd::AsyncFileDialog::new()
                     .add_filter(
                         "Media",
-                        &["mp4", "mov", "mkv", "webm", "avi", "m4v", "gif", "mp3", "wav", "m4a", "aac", "flac", "ogg", "png", "jpg", "jpeg", "webp"],
+                        &[
+                            "mp4", "mov", "mkv", "webm", "avi", "m4v", "gif", "mp3", "wav", "m4a",
+                            "aac", "flac", "ogg", "png", "jpg", "jpeg", "webp",
+                        ],
                     )
                     .set_title("Importar a la librería")
                     .pick_files()
@@ -350,7 +357,9 @@ fn app() -> Element {
         let project = project.clone();
         let monitor = monitor.clone();
         move |track_id: String, start: f64| {
-            let Some(media_id) = dragging_media() else { return };
+            let Some(media_id) = dragging_media() else {
+                return;
+            };
             dragging_media.set(None);
             if let Some(cid) =
                 editor::add_clip_on(&mut project.borrow_mut(), &media_id, &track_id, start)
@@ -536,7 +545,12 @@ fn app() -> Element {
                     let mut ed = project.borrow_mut();
                     match d.mode {
                         DragMode::Move => {
-                            editor::move_clip(&mut ed, d.clip_id, d.orig_start + dsec, target_track);
+                            editor::move_clip(
+                                &mut ed,
+                                d.clip_id,
+                                d.orig_start + dsec,
+                                target_track,
+                            );
                         }
                         DragMode::TrimStart => {
                             editor::trim(&mut ed, d.clip_id, true, dsec);
@@ -622,9 +636,12 @@ fn app() -> Element {
     let audio = selected_now
         .as_ref()
         .and_then(|id| editor::audio_info(&project.borrow(), id));
-    let selected_name = selected_now
-        .as_ref()
-        .and_then(|id| tl.clips.iter().find(|c| &c.id == id).map(|c| c.name.clone()));
+    let selected_name = selected_now.as_ref().and_then(|id| {
+        tl.clips
+            .iter()
+            .find(|c| &c.id == id)
+            .map(|c| c.name.clone())
+    });
     let tl_seconds = tl.duration.max(dur()).max(10.0);
     let tl_width = tl_seconds * PPS + 40.0;
     let playhead_x = pos() * PPS;
@@ -635,6 +652,9 @@ fn app() -> Element {
             onmouseup: move |_| {
                 if dragging_media().is_some() {
                     dragging_media.set(None);
+                }
+                if scrubbing() {
+                    scrubbing.set(false);
                 }
             },
             header { class: "topbar",
@@ -1178,14 +1198,55 @@ fn app() -> Element {
                     onmousemove: on_drag_move,
                     onmouseup: end_drag(),
                     onmouseleave: end_drag(),
-                    div { class: "lanes", style: "width: {tl_width}px;",
+                    div {
+                        class: if scrubbing() { "lanes scrubbing" } else { "lanes" },
+                        style: "width: {tl_width}px;",
+                        div {
+                            class: "tl-ruler",
+                            style: "width: {tl_width}px;",
+                            onmousedown: {
+                                let monitor = monitor.clone();
+                                move |e: MouseEvent| {
+                                    e.stop_propagation();
+                                    scrubbing.set(true);
+                                    monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                }
+                            },
+                            onmousemove: {
+                                let monitor = monitor.clone();
+                                move |e: MouseEvent| {
+                                    if scrubbing() {
+                                        monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                    }
+                                }
+                            },
+                            for i in 0..=(tl_seconds.ceil() as i64) {
+                                div {
+                                    key: "tick-{i}",
+                                    class: if i % 5 == 0 { "tick major" } else { "tick" },
+                                    style: "left: {i as f64 * PPS}px;",
+                                    if i % 5 == 0 {
+                                        span { class: "tick-label", "{fmt_time(i as f64)}" }
+                                    }
+                                }
+                            }
+                        }
                         for lane in 0..tl.track_count.max(1) {
                             div {
                                 class: if (drop_now == Some(lane) && drag_now.is_some()) || media_drag { "lane drop" } else { "lane" },
                                 onmousedown: {
                                     let monitor = monitor.clone();
                                     move |e: MouseEvent| {
+                                        scrubbing.set(true);
                                         monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                    }
+                                },
+                                onmousemove: {
+                                    let monitor = monitor.clone();
+                                    move |e: MouseEvent| {
+                                        if scrubbing() {
+                                            monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                        }
                                     }
                                 },
                                 onmouseenter: move |_| {
@@ -1271,12 +1332,21 @@ fn app() -> Element {
                                     }
                                 }
                         if has_clip {
-                            div { class: "tl-playhead", style: "left: {playhead_x}px;" }
+                            div {
+                                class: "tl-playhead", style: "left: {playhead_x}px;",
+                                div {
+                                    class: "tl-playhead-grab",
+                                    onmousedown: move |e: MouseEvent| {
+                                        e.stop_propagation();
+                                        scrubbing.set(true);
+                                    },
+                                }
+                            }
                         }
                     }
                 }
                 div { class: "tl-status",
-                    "Arrastra el cuerpo para mover · los bordes para recortar · {tl.clip_count} clip(s) · {tl.track_count} pista(s)"
+                    "Arrastra el cabezal (o la regla) para moverte · el cuerpo del clip para moverlo · los bordes para recortar · {tl.clip_count} clip(s) · {tl.track_count} pista(s)"
                 }
             }
         }
@@ -1529,10 +1599,28 @@ const STYLE: &str = r#"
         font-size: 11px; color: #e8e9ee; white-space: nowrap;
         text-overflow: ellipsis; overflow: hidden; pointer-events: none;
     }
+    .tl-ruler {
+        position: relative; flex: none; height: 22px; margin-bottom: 2px;
+        background: #15161d; border-radius: 6px; border: 1px solid #22252f;
+        cursor: pointer; overflow: hidden; user-select: none;
+    }
+    .tl-ruler .tick { position: absolute; top: 10px; bottom: 0; width: 1px; background: #2a2d38; }
+    .tl-ruler .tick.major { top: 6px; background: #3a3f4f; }
+    .tl-ruler .tick-label {
+        position: absolute; top: -4px; left: 3px; font-size: 10px;
+        color: #9aa0b4; white-space: nowrap; pointer-events: none;
+    }
+    .lanes.scrubbing .clip { pointer-events: none; }
     .tl-playhead {
         position: absolute; top: 8px; bottom: 8px; width: 2px; background: #ff5c7a;
-        box-shadow: 0 0 6px #ff5c7a; pointer-events: none;
+        box-shadow: 0 0 6px #ff5c7a; pointer-events: none; z-index: 5;
     }
+    .tl-playhead-grab {
+        position: absolute; top: -3px; left: -6px; width: 14px; height: 13px;
+        background: #ff5c7a; border-radius: 3px 3px 5px 5px; cursor: ew-resize;
+        pointer-events: auto; box-shadow: 0 1px 3px rgba(0,0,0,.5);
+    }
+    .tl-playhead-grab:hover { background: #ff7a93; }
     .tl-status {
         padding: 6px 16px; font-size: 11px; color: #9aa0b4;
         border-top: 1px solid #2a2d38; background: #191b22;
