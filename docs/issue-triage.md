@@ -31,7 +31,7 @@ En la pestaña Variables de la misma pantalla:
   admita Interactions API y salida JSON estructurada. El valor predeterminado del
   paquete es `gemini-4-hydrogen`, usado en la documentación oficial consultada.
 - `TRIAGE_ENABLED`: dejar en `false` mientras se prepara. Cambiar a `true` cuando
-  quieras habilitar ejecuciones, incluidas las manuales. A partir de entonces los
+  quieras habilitar ejecuciones automáticas. Las manuales funcionan aunque esté desactivado. A partir de entonces los
   issues nuevos, reabiertos o editados pueden consumir cuota y publicar resultados.
 
 La API recibe el título y hasta 10000 caracteres del cuerpo del issue, junto con
@@ -41,12 +41,12 @@ de Interactions; no sustituye las condiciones de datos del proveedor.
 
 ## 4. Probar con un issue real
 
-Con el workflow ya en `main` y TRIAGE_ENABLED=true: Actions >
+Con el workflow ya en `main` y TRIAGE_ENABLED=false: Actions >
 Clasificar issues con Gemini > Run workflow. Elegir `main`, indicar el número de
 un issue abierto y dejar `dry_run` activado. Consume una llamada a Gemini pero no
 comenta ni etiqueta. Ver la propuesta en el resumen de esa ejecución.
 
-Si es correcta, repetir desactivando `dry_run`. El bot creará, si hace falta,
+Si es correcta, repetir desactivando `dry_run`. Después establecer TRIAGE_ENABLED=true para los eventos automáticos. El bot creará, si hace falta,
 la etiqueta y publicará un comentario. Editar el texto de ese issue comprobará
 que actualiza su propio comentario en vez de duplicarlo.
 Si la API responde 400/404, verificar el modelo y su compatibilidad; 401/403,

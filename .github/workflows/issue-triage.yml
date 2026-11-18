@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   triage:
-    if: vars.TRIAGE_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.issue.user.type != 'Bot')
+    if: github.event_name == 'workflow_dispatch' || (vars.TRIAGE_ENABLED == 'true' && github.event.issue.user.type != 'Bot')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
