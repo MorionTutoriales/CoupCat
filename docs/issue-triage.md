@@ -1,4 +1,4 @@
-# Clasificador de issues de CoupCat con Gemini
+# GollumTicket: clasificador de issues con Gemini
 
 Implementación del issue #1. La automatización permanece desactivada hasta configurar TRIAGE_ENABLED=true y el secreto GEMINI_API_KEY.
 Solo usa Python 3 y su biblioteca estándar. No cambia el código Rust de CoupCat.
@@ -42,7 +42,7 @@ de Interactions; no sustituye las condiciones de datos del proveedor.
 ## 4. Probar con un issue real
 
 Con el workflow ya en `main` y TRIAGE_ENABLED=false: Actions >
-Clasificar issues con Gemini > Run workflow. Elegir `main`, indicar el número de
+GollumTicket - Clasificar issues > Run workflow. Elegir `main`, indicar el número de
 un issue abierto y dejar `dry_run` activado. Consume una llamada a Gemini pero no
 comenta ni etiqueta. Ver la propuesta en el resumen de esa ejecución.
 
@@ -72,21 +72,35 @@ clave y permisos; 429, cuota. No se reintenta indefinidamente ni se imprimen cla
   propio comentario. Las operaciones de etiqueta y comentario no son una transacción;
   ante un fallo parcial, una ejecución posterior puede completar el comentario.
 
-## Nombre y avatar propios (segunda fase)
+## Configurar GollumTicket antes de ejecutar
 
-No basta con cambiar el nombre del workflow: seguirá publicando github-actions[bot].
-Registrar una GitHub App propia en Settings de la cuenta > Developer settings >
-GitHub Apps. Elegir nombre e imagen de perfil; para usarla desde Actions no hace
-falta alojar un servidor de webhooks. Darle permiso Issues: read and write e
-instalarla solo en CoupCat. Guardar su App ID y clave privada mediante variables
-y secretos. Generar un installation token con la acción oficial
-actions/create-github-app-token (fijada a una revisión verificada).
+Registrar una GitHub App en Settings de la cuenta > Developer settings >
+GitHub Apps > New GitHub App.
 
-Pasar ese token al script como GH_TOKEN y su login real de bot como
-TRIAGE_BOT_LOGIN. Mantener el token de lectura de Actions para checkout. La lógica
-de clasificación no cambia. Esta fase requiere configurar y autorizar la App;
-el paquete no la crea ni concede permisos. Al cambiar de identidad, conservar o
-retirar manualmente el comentario anterior de Actions para no tener dos visibles.
+- Nombre preferido: **GollumTicket**; alternativa si está ocupado: **Ticket-Gollum**.
+- Homepage: https://github.com/MorionTutoriales/CoupCat.
+- Desactivar Webhook: no hace falta un servidor.
+- Repository permissions: **Issues: Read and write**; Metadata de lectura
+  es obligatorio. No conceder escritura de código ni administración.
+- Permitir la instalación solo en la propia cuenta e instalarla solo en CoupCat.
+- Subir el avatar en la configuración de la App.
+
+En Settings > Secrets and variables > Actions de CoupCat, guardar el Client ID
+como variable **GOLLUM_CLIENT_ID** y la clave privada de la App como secreto
+**GOLLUM_PRIVATE_KEY**. No subir el archivo PEM al repositorio ni compartirlo
+en comentarios. La creación de la App, su instalación y estos valores son
+pasos pendientes de configuración: los archivos por sí solos no los realizan.
+
+El workflow usa la acción oficial actions/create-github-app-token, fijada a un
+commit, y pide un token limitado al repositorio actual y al permiso Issues.
+El token se revoca al terminar el job. El login se obtiene del slug real de
+la App, por lo que funciona con cualquiera de los dos nombres. Checkout
+conserva el token de Actions con permiso de lectura. La clave Gemini sigue
+siendo GEMINI_API_KEY.
+
+Configurar la App antes de la primera simulación. Mantener TRIAGE_ENABLED=false
+hasta verificarla. Si ya hubiera comentarios de github-actions[bot], revisarlos
+manualmente: la nueva identidad solo actualiza sus propios comentarios.
 
 ## Validación local
 

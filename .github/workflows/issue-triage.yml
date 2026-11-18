@@ -1,4 +1,4 @@
-name: Clasificar issues con Gemini
+name: GollumTicket - Clasificar issues
 
 on:
   issues:
@@ -16,7 +16,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 concurrency:
   group: issue-triage-${{ github.event.issue.number || inputs.issue_number }}
@@ -34,10 +33,19 @@ jobs:
           persist-credentials: false
       - name: Pruebas del clasificador (sin llamadas a Gemini)
         run: python3 -m unittest discover -s scripts -p test_issue_triage.py
+      - name: Autenticar GollumTicket
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3
+        with:
+          client-id: ${{ vars.GOLLUM_CLIENT_ID }}
+          private-key: ${{ secrets.GOLLUM_PRIVATE_KEY }}
+          # Sin owner, el token queda limitado al repositorio actual.
+          permission-issues: write
       - name: Clasificar
         run: python3 scripts/issue_triage.py
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TRIAGE_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
