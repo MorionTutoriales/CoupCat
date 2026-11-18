@@ -1,49 +1,65 @@
 # CoupCat
 
-**A free, open-source video editor built in Rust** — CapCut-like editing, lots of
-filters, no paywalls. CoupCat follows Artcraft's *"native, not wrapped"*
-philosophy: a real desktop app, not a browser in a box. A Web App build (for
-Android and other phones) is a planned target from the same codebase.
+**Un editor de video libre y de código abierto hecho en Rust** — edición al estilo
+CapCut, muchos filtros y sin muros de pago. CoupCat sigue la filosofía *"nativo, no
+envuelto"* de Artcraft: una aplicación de escritorio real, no un navegador dentro de
+una caja. Una versión Web App (para Android y otros teléfonos) es un objetivo
+planeado desde el mismo código.
 
-> **Status:** early scaffolding. The editing engine compiles and runs; the
-> CoupCat user interface is not built yet. See the roadmap below.
+> **Estado:** en desarrollo activo. El motor de edición compila y funciona; la
+> interfaz de escritorio ya tiene importación, línea de tiempo, previsualización,
+> filtros, texto, transiciones, audio, recorte de fondo y subtítulos. Mira la hoja
+> de ruta más abajo.
 
-## Where the code comes from
+## Cómo contribuir
 
-CoupCat does not start from scratch. It **forks the Rust engine** of
+Las contribuciones se coordinan con **issues** y **pull requests**: buscas (o creas)
+un issue, **comentas para tomarlo**, trabajas en tu rama y abres un PR. El proceso
+completo, pensado para que lo siga tanto una persona como un modelo de IA, está en
+**[CONTRIBUTING.md](CONTRIBUTING.md)**.
+
+## De dónde viene el código
+
+CoupCat no parte de cero. Es un **trabajo derivado**: reutiliza el **motor de video
+en Rust** de
 [`artcraft-android/capcraft-android`](https://github.com/artcraft-android/capcraft-android)
-(itself built on the *Concat* engine by jub0t and contributors) — a complete,
-platform-agnostic video engine split into `concat-*` crates. We keep that
-engine and **replace the Android/Kotlin UI with a new desktop/web UI in
-[Dioxus](https://dioxuslabs.com/)**.
+(a su vez construido sobre el motor *Concat* de jub0t y colaboradores) — un motor de
+video completo e independiente de plataforma, dividido en crates `concat-*`.
+Conservamos ese motor y **reemplazamos la interfaz Android/Kotlin por una interfaz de
+escritorio/web nueva en [Dioxus](https://dioxuslabs.com/)**.
 
-[`jub0t/OpenCut`](https://github.com/jub0t/OpenCut) was evaluated too, but it is
-a TypeScript rewrite-in-progress, so it serves only as design reference.
+CoupCat es un proyecto independiente, con su propio historial de Git. No está afiliado
+ni respaldado por ArtCraft, el proyecto Concat, ByteDance ni CapCut.
 
-**License:** AGPL-3.0-or-later, inherited from the upstream engine. CoupCat
-stays free and open source. See `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md`.
+**Licencia:** AGPL-3.0-or-later, heredada del motor original. CoupCat se mantiene
+libre y de código abierto, conserva el copyright y la licencia de los autores
+originales (como exige la AGPL) y publica sus propios aportes bajo la misma licencia.
+Consulta `LICENSE`, `NOTICE` y `THIRD_PARTY_NOTICES.md`.
 
-## The engine (`src/crates/`)
+## El motor (`src/crates/`)
 
-| Crate | Role |
-|-------|------|
-| `concat-core` | Time, frames and the timeline model shared by everything |
-| `concat-project` | Project and multi-track timeline data |
-| `concat-media` | Decode/encode via **FFmpeg** (the only crate that knows FFmpeg exists) |
-| `concat-render` | Turning a timeline + timestamp into one frame (**wgpu**) |
-| `concat-effects` | Filters and effects, drawn by shaders |
-| `concat-text` | Titles and text |
-| `concat-export` | Encoding the finished output |
-| `concat-host` | Sessions, project folders, previews, playback *(AI — parked, see below)* |
-| `concat-vision` | Cutout / background-removal models *(AI)* |
-| `concat-speech` | On-device captions, whisper.cpp + sherpa-onnx *(AI — parked)* |
+| Crate | Rol |
+|-------|-----|
+| `concat-core` | Tiempo, fotogramas y el modelo de línea de tiempo que comparte todo |
+| `concat-project` | Datos del proyecto y de la línea de tiempo multipista |
+| `concat-media` | Decodificar/codificar con **FFmpeg** (el único crate que sabe que FFmpeg existe) |
+| `concat-render` | Convertir una línea de tiempo + marca de tiempo en un fotograma (**wgpu**) |
+| `concat-effects` | Filtros y efectos, dibujados por shaders |
+| `concat-text` | Títulos y texto |
+| `concat-export` | Codificar la salida final y mezclar el audio |
+| `concat-vision` | Modelos de recorte / eliminación de fondo *(IA en el dispositivo)* |
+| `coupcat-desktop` | La aplicación de escritorio en Dioxus (interfaz, audio, subtítulos) |
 
-## Building on Windows
+Los crates `concat-host` y `concat-speech` del repositorio original se conservan como
+referencia pero están **excluidos del build**: CoupCat hace esas tareas por su cuenta
+(recorte de fondo con `concat-vision` directamente; subtítulos con `whisper-rs`).
 
-Build with the **MSVC toolchain**, from a Visual Studio Developer shell (it
-needs cl.exe/link.exe and the MSVC headers for FFmpeg, ONNX Runtime and
-whisper.cpp). The pinned toolchain (`rust-toolchain.toml`) resolves to the MSVC
-host; `src/.cargo/config.toml` wires `FFMPEG_DIR` and `libclang`.
+## Compilar en Windows
+
+Compila con la **cadena de herramientas MSVC**, desde una *Developer Shell* de Visual
+Studio (necesita `cl.exe`/`link.exe` y las cabeceras de MSVC para FFmpeg, ONNX Runtime
+y whisper.cpp). La versión fijada (`rust-toolchain.toml`) resuelve al host MSVC;
+`src/.cargo/config.toml` configura `FFMPEG_DIR` y `libclang`.
 
 ```powershell
 $vc = "C:\Program Files\Microsoft Visual Studio\2022\Community"
@@ -53,23 +69,32 @@ cd src
 cargo run -p coupcat-desktop
 ```
 
-Local dependencies under `third_party/` (gitignored, machine-downloaded): an
-FFmpeg **shared dev build** (BtbN), **ONNX Runtime** (`onnxruntime-win-x64`, for
-background removal — loaded dynamically), and a **Whisper model** (`ggml-base.bin`,
-for captions). `build.rs` copies the DLLs and the model next to the exe
-automatically, and `scripts\package.ps1` assembles a self-contained
-`dist\CoupCat\` for distribution. `libclang` comes from Doxygen.
+Las dependencias locales bajo `third_party/` (ignoradas por Git, se descargan en cada
+máquina): una **build de desarrollo compartida de FFmpeg** (BtbN), **ONNX Runtime**
+(`onnxruntime-win-x64`, para el recorte de fondo — cargado dinámicamente) y un
+**modelo de Whisper** (`ggml-base.bin`, para los subtítulos). `build.rs` copia las DLL
+y el modelo junto al ejecutable automáticamente, y `scripts\package.ps1` arma un
+`dist\CoupCat\` autocontenido para distribuir. `libclang` viene de Doxygen.
 
-## Roadmap
+## Hoja de ruta
 
-- **M0 — Scaffolding ✅** Fork, Windows toolchain, FFmpeg wired, core engine compiles.
-- **M1 — Desktop shell ✅** Dioxus window: import, timeline + preview playback.
-- **M2 — Core editing ✅** Trim / split / move (mouse drag), multi-track, undo/redo,
-  composed preview, export MP4.
-- **M3 — Filters & effects ✅** 162 shader effects with adjustable parameters,
-  text/titles, CapCut-style centered transitions.
-- **M4 — On-device AI ✅** Background removal (person cutout) and automatic
-  captions (whisper.cpp), both local. Settled on the MSVC toolchain.
-- **M5 — Web App.** WASM target (WebCodecs / WebGPU) for Android browsers.
-- **M6 — Polish & packaging.** In progress: auto-bundled runtime deps, release
-  packaging script, window sizing. Still to do: installer, app icon/branding.
+- **M0 — Andamiaje ✅** Motor derivado, cadena de herramientas de Windows, FFmpeg
+  conectado, el motor base compila.
+- **M1 — Shell de escritorio ✅** Ventana en Dioxus: importar, línea de tiempo y
+  previsualización con reproducción.
+- **M2 — Edición básica ✅** Recortar / dividir / mover (arrastrando con el ratón),
+  multipista, deshacer/rehacer, previsualización compuesta, exportar MP4.
+- **M3 — Filtros y efectos ✅** 162 efectos de shader con parámetros ajustables,
+  texto/títulos y transiciones centradas al estilo CapCut.
+- **M4 — IA en el dispositivo ✅** Eliminación de fondo (recorte de personas) y
+  subtítulos automáticos (whisper.cpp), ambos locales. Cadena de herramientas MSVC.
+- **M5 — Web App.** Objetivo WASM (WebCodecs / WebGPU) para navegadores de Android.
+- **M6 — Pulido y empaquetado.** En progreso: dependencias de ejecución agrupadas
+  automáticamente, script de empaquetado, tamaño de ventana. Pendiente: instalador y
+  marca/ícono definitivos.
+
+## Agradecimientos
+
+- Motor *Concat* — Jareer Abdullah y los colaboradores de Concat.
+- CapCraft para Android — el equipo de ArtCraft y los colaboradores de CapCraft.
+- CoupCat — los colaboradores de CoupCat.
