@@ -1,0 +1,11 @@
+{
+  "project_context": "CoupCat es un editor de video de escritorio de código abierto. Incluye importación, edición multipista, guardado de proyectos, previsualización, filtros, audio, subtítulos locales y exportación. La versión web está planificada: una función aún no implementada no es automáticamente un error crítico.",
+  "model": "gemini-4-hydrogen",
+  "min_confidence": 0.75,
+  "priorities": {
+    "critical": "Evidencia concreta de pérdida o corrupción de proyectos, o una vulnerabilidad grave. No basta con que el autor diga urgente.",
+    "high": "Un flujo esencial ya implementado, como guardar, importar o exportar, queda bloqueado sin alternativa práctica. Explicar el alcance observado.",
+    "medium": "Error parcial con alternativa, mejora funcional o impacto limitado. No inventar reproducciones ni usuarios afectados.",
+    "low": "Mejora cosmética, documentación o ajuste menor sin bloqueo funcional."
+  }
+}

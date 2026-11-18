@@ -13,3 +13,7 @@ local.properties
 .gradle/
 .kotlin/
 build/
+
+# Python issue-triage tooling
+__pycache__/
+*.py[cod]
