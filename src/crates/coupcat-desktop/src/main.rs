@@ -534,16 +534,20 @@ fn app() -> Element {
             move |_: MouseEvent| {
                 let Some(d) = drag() else { return };
                 drag.set(None);
-                let dpx = d.cur_px - d.start_px;
-                if dpx.abs() < 2.0 {
-                    return;
-                }
-                let dsec = dpx / PPS;
                 // Where to drop: the lane under the cursor, else the clip's own.
+                // Resolve it (and clear drop_lane) BEFORE the minimal-move guard,
+                // so a vertical drag to another lane is never dropped on the floor.
                 let target_track = drop_lane()
                     .and_then(|li| timeline().track_ids.get(li).cloned())
                     .unwrap_or_else(|| d.track_id.clone());
                 drop_lane.set(None);
+                let dpx = d.cur_px - d.start_px;
+                // Changing lanes counts as a move even with no horizontal travel.
+                let changed_track = d.mode == DragMode::Move && target_track != d.track_id;
+                if dpx.abs() < 2.0 && !changed_track {
+                    return;
+                }
+                let dsec = dpx / PPS;
                 {
                     let mut ed = project.borrow_mut();
                     match d.mode {
