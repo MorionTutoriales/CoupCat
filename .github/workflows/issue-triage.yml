@@ -1,0 +1,52 @@
+name: GollumTicket - Clasificar issues
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Número de un issue existente
+        required: true
+        type: string
+      dry_run:
+        description: Solo mostrar la propuesta, sin comentar ni etiquetar
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: issue-triage-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  triage:
+    if: github.event_name == 'workflow_dispatch' || (vars.TRIAGE_ENABLED == 'true' && github.event.issue.user.type != 'Bot')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Pruebas del clasificador (sin llamadas a Gemini)
+        run: python3 -m unittest discover -s scripts -p test_issue_triage.py
+      - name: Autenticar GollumTicket
+        id: app-token
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3
+        with:
+          client-id: ${{ vars.GOLLUM_CLIENT_ID }}
+          private-key: ${{ secrets.GOLLUM_PRIVATE_KEY }}
+          # Sin owner, el token queda limitado al repositorio actual.
+          permission-issues: write
+      - name: Clasificar
+        run: python3 scripts/issue_triage.py
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TRIAGE_BOT_LOGIN: ${{ steps.app-token.outputs.app-slug }}[bot]
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
