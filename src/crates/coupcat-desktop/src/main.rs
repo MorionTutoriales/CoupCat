@@ -124,8 +124,10 @@ fn app() -> Element {
     let mut loading = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
-    // The edit, derived from the Editor after each command.
-    let mut timeline = use_signal(TimelineView::default);
+    // The edit, derived from the Editor after each command. Seeded from the
+    // Editor itself so a fresh project already shows (and can drop onto) its
+    // lanes, instead of an empty view with no track ids.
+    let mut timeline = use_signal(|| editor::view(&project.borrow()));
     // The imported-media library (bin).
     let mut media = use_signal(Vec::<editor::MediaView>::new);
     // Media id being dragged from the library onto the timeline.
@@ -348,6 +350,7 @@ fn app() -> Element {
                     }
                 }
                 media.set(editor::media_list(&project.borrow()));
+                timeline.set(editor::view(&project.borrow()));
                 error.set(last_err);
             });
         }
