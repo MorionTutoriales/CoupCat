@@ -120,6 +120,10 @@ pub struct MediaView {
     pub name: String,
     pub kind: &'static str,
     pub duration: Option<f64>,
+    /// The source file, for the thumbnail.
+    pub path: String,
+    /// Displayed `(width, height)` when the file has a picture.
+    pub size: Option<(u32, u32)>,
 }
 
 /// The project's imported media, for the library panel.
@@ -137,6 +141,8 @@ pub fn media_list(editor: &Editor) -> Vec<MediaView> {
                 MediaKind::Image => "image",
             },
             duration: m.duration,
+            path: m.path.clone(),
+            size: m.width.zip(m.height),
         })
         .collect()
 }
