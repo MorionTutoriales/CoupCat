@@ -98,17 +98,24 @@ git switch -c fix/123-descripcion-corta     # correcciones
 ## Paso 4 — Haz los cambios
 
 - **Mantén el PR enfocado** en el issue: un solo tema por PR.
-- **Estilo de código:** antes de hacer commit, dentro de `src/` ejecuta:
+- **Comprobaciones (ligeras a propósito):** el proyecto está empezando, así que no
+  pedimos una batería pesada. Compilar este proyecto tarda (FFmpeg, wgpu, ONNX Runtime
+  y whisper.cpp), por eso **limita siempre los comandos al crate que tocaste** y no
+  uses `--all` ni ejecutes todo el workspace. Dentro de `src/`:
 
   ```bash
-  cargo fmt --all
-  cargo clippy --all-targets
-  cargo test
-  cargo build -p coupcat-desktop
+  # Obligatorio: confirma que compila (cambia el crate si no tocaste la interfaz)
+  cargo check -p coupcat-desktop
   ```
 
-  El código debe compilar sin errores y pasar `clippy` y las pruebas. Si añades
-  comportamiento nuevo, añade o actualiza pruebas cuando tenga sentido.
+  - **Recomendado:** `cargo clippy -p coupcat-desktop`, si no te supone esperar mucho.
+  - **Solo si tocaste el motor** (`src/crates/concat-*`): `cargo test -p <ese-crate>`.
+    Los cambios de interfaz no necesitan ejecutar pruebas.
+  - **Formato:** pasa `rustfmt` **solo a los archivos que modificaste**
+    (`rustfmt --edition 2024 ruta/al/archivo.rs`). No uses `cargo fmt --all`: reformatea
+    archivos que no tocaste y llena el PR de ruido.
+  - Si una comprobación tarda demasiado en tu equipo, **puedes omitirla**: dilo en el
+    PR (por ejemplo, "solo `cargo check`") y la revisión lo tendrá en cuenta.
 - **Commits claros:** mensajes breves en imperativo que expliquen el *qué* y el *por
   qué*. En inglés o español, pero sé consistente dentro del PR.
 - **Licencia:** al contribuir aceptas que tu aporte se publique bajo **AGPL-3.0-or-later**.
@@ -144,7 +151,19 @@ En la descripción del PR incluye:
 
 - Un responsable revisará tu PR y podrá pedir cambios. Responde a los comentarios y
   sube nuevos commits a la misma rama; el PR se actualiza solo.
-- Mantén tu rama al día con `main` si te lo piden (`git pull --rebase origin main`).
+- Si `main` avanzó mientras trabajabas (otro PR se mergeó antes que el tuyo), **trae
+  esos cambios a tu rama**. En tu fork, `origin` es *tu copia* y `upstream` es el
+  repositorio principal (`gh repo fork --clone` ya lo configura; si no existe, añádelo con
+  `git remote add upstream https://github.com/MorionTutoriales/CoupCat.git`):
+
+  ```bash
+  git fetch upstream
+  git rebase upstream/main                      # o: git merge upstream/main
+  git push --force-with-lease origin feat/123-descripcion-corta
+  ```
+
+  Si hay conflictos, resuélvelos, continúa (`git rebase --continue`) y vuelve a subir.
+  Si no puedes, avísalo en el PR y una persona responsable puede actualizarla por ti.
 - Cuando el PR esté aprobado y la CI (si existe) en verde, se hará *merge* y el issue
   se cerrará automáticamente.
 
@@ -157,10 +176,13 @@ Si eres un agente trabajando de forma autónoma, sigue exactamente estas reglas:
 1. **No escribas código sin un issue asignado.** Primero toma el issue con `/tomar`
    (Paso 2) y confirma que está asignado a ti.
 2. **Un issue → una rama → un PR.** No mezcles temas no relacionados.
-3. **Antes de abrir el PR**, ejecuta `cargo fmt --all`, `cargo clippy --all-targets`,
-   `cargo test` y `cargo build -p coupcat-desktop` dentro de `src/`, y reporta el
-   resultado real en el PR. No afirmes que algo pasó si no lo ejecutaste.
-4. **No hagas push a `main`** ni fuerces el historial. Trabaja siempre en tu fork/rama.
+3. **Antes de abrir el PR**, ejecuta al menos `cargo check -p <crate-tocado>` dentro de
+   `src/` (ver Paso 4; evita `--all` y los comandos sobre todo el workspace) y reporta
+   en el PR **exactamente qué ejecutaste y qué resultado dio**. No afirmes que algo
+   pasó si no lo ejecutaste.
+4. **No hagas push a `main`.** Trabaja siempre en tu fork/rama. Solo se permite
+   `--force-with-lease` sobre **tu propia rama del PR** al hacer *rebase* (Paso 6), nunca
+   sobre `main` ni sobre ramas ajenas.
 5. **No toques** `LICENSE`, `NOTICE` ni el historial de atribución sin indicarlo
    explícitamente en el issue.
 6. Enlaza el issue con `Closes #<n>` en el PR y describe cómo verificaste el cambio.
