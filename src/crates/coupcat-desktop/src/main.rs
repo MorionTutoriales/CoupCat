@@ -18,6 +18,7 @@ mod export;
 mod monitor;
 mod peaks;
 mod text;
+mod thumbs;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -156,11 +157,17 @@ fn app() -> Element {
     let mut drop_lane = use_signal(|| None::<usize>);
     // Bumped when background waveform peaks arrive, to re-render the timeline.
     let mut wave_rev = use_signal(|| 0u64);
+    // Bumped when a background library thumbnail lands, to re-render the bin.
+    let mut thumb_rev = use_signal(|| 0u64);
     use_future(move || async move {
         loop {
             if peaks::take_dirty() {
                 let v = wave_rev();
                 wave_rev.set(v + 1);
+            }
+            if thumbs::take_dirty() {
+                let v = thumb_rev();
+                thumb_rev.set(v + 1);
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
@@ -611,6 +618,7 @@ fn app() -> Element {
     let drop_now = drop_lane();
     let media_drag = dragging_media().is_some();
     let _wave_rev = wave_rev(); // subscribe: re-render when peaks arrive
+    let _thumb_rev = thumb_rev(); // subscribe: re-render when thumbnails arrive
     let selected_now = selected();
     let has_clip = tl.clip_count > 0;
     let fx_cards = selected_now
@@ -722,7 +730,16 @@ fn app() -> Element {
                                         let id = m.id.clone();
                                         move |_| dragging_media.set(Some(id.clone()))
                                     },
-                                    div { class: "lib-kind k-{m.kind}", "{kind_icon(m.kind)}" }
+                                    match library_thumb(m) {
+                                        Some(src) => rsx! {
+                                            div { class: "lib-kind lib-thumb k-{m.kind}",
+                                                img { src: "{src}", draggable: "false" }
+                                            }
+                                        },
+                                        None => rsx! {
+                                            div { class: "lib-kind k-{m.kind}", "{kind_icon(m.kind)}" }
+                                        },
+                                    }
                                     div { class: "lib-meta",
                                         span { class: "lib-name", "{m.name}" }
                                         span { class: "lib-dur", "{dur_label(m.duration)}" }
@@ -1360,6 +1377,16 @@ fn app() -> Element {
     }
 }
 
+/// The library thumbnail for a bin item, once the background worker has made
+/// it. Audio has no picture and keeps its icon; so does anything still
+/// queued or that failed to decode.
+fn library_thumb(m: &editor::MediaView) -> Option<String> {
+    if m.kind == "audio" {
+        return None;
+    }
+    thumbs::get(&m.path, m.size, m.duration)
+}
+
 /// A badge glyph for a media kind.
 fn kind_icon(kind: &str) -> &'static str {
     match kind {
@@ -1459,6 +1486,8 @@ const STYLE: &str = r#"
     .lib-kind.k-video { background: #3b4b8a; }
     .lib-kind.k-audio { background: #6a4a7a; }
     .lib-kind.k-image { background: #3a6a5a; }
+    .lib-kind.lib-thumb { width: 60px; background: #000; overflow: hidden; }
+    .lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
     .lib-meta { display: flex; flex-direction: column; min-width: 0; }
     .lib-name { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .lib-dur { font-size: 11px; color: #9aa0b4; }
