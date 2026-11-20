@@ -18,10 +18,26 @@ use concat_media::{DecodeOptions, Decoder, FrameSource};
 use concat_project::model::Subject;
 use concat_vision::{MaskStore, Segmenter, mask_dir};
 
+/// Where masks live once a project has a home on disk (`<name>_datos`, beside
+/// the project file). `None` means the project was never saved: temp folder.
+static PROJECT_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
 /// The session's project folder, where masks live. Shared with the clip-list
 /// builder so `flatten_timeline_in` names the same mask directory.
 pub fn project_dir() -> PathBuf {
-    std::env::temp_dir().join("coupcat-project")
+    PROJECT_DIR
+        .lock()
+        .ok()
+        .and_then(|dir| dir.clone())
+        .unwrap_or_else(|| std::env::temp_dir().join("coupcat-project"))
+}
+
+/// Point the masks at a project's own data folder, or back at the temp folder
+/// (`None`) for a project that was never saved.
+pub fn set_project_dir(dir: Option<PathBuf>) {
+    if let Ok(mut current) = PROJECT_DIR.lock() {
+        *current = dir;
+    }
 }
 
 /// Progress of a running (or finished) cutout computation.
