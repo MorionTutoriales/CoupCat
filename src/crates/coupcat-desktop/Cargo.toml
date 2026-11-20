@@ -36,6 +36,8 @@ concat-project.workspace = true
 concat-export.workspace = true
 concat-effects.workspace = true
 concat-text.workspace = true
+# Project files: the engine's document is JSON.
+serde_json.workspace = true
 # Background removal (person cutout): on-device inference via ONNX Runtime,
 # loaded dynamically at runtime (see workspace ort = load-dynamic).
 concat-vision = { workspace = true, features = ["infer"] }

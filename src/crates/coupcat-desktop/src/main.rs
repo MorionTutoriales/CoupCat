@@ -17,11 +17,13 @@ mod effects;
 mod export;
 mod monitor;
 mod peaks;
+mod project_file;
 mod text;
 mod thumbs;
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -72,6 +74,289 @@ struct Drag {
     /// Mouse page-x where the drag began, and where it is now (pixels).
     start_px: f64,
     cur_px: f64,
+}
+
+/// Something that replaces the open project; asks about unsaved changes first.
+#[derive(Clone, PartialEq)]
+enum Pending {
+    /// Start an empty project.
+    New,
+    /// Pick a project file and open it.
+    Open,
+    /// Open this recent project.
+    Recent(PathBuf),
+    /// Restore the autosaved work of a previous session.
+    Recover,
+}
+
+/// Everything the project-file actions touch, bundled so each button can clone
+/// one value instead of a dozen. Signals are `Copy`; the rest is cheap to clone.
+#[derive(Clone)]
+struct Files {
+    project: Rc<RefCell<concat_project::Editor>>,
+    monitor: Monitor,
+    media: Signal<Vec<editor::MediaView>>,
+    timeline: Signal<TimelineView>,
+    selected: Signal<Option<String>>,
+    /// The project file on disk, once the project was saved or opened.
+    project_path: Signal<Option<PathBuf>>,
+    /// The project as last saved/opened/created: "unsaved changes" is any
+    /// difference from this.
+    saved_snap: Signal<String>,
+    /// A message about the last file action: `(ok, text)`.
+    file_msg: Signal<Option<(bool, String)>>,
+    recovery_offer: Signal<bool>,
+    pending: Signal<Option<Pending>>,
+    busy: Signal<bool>,
+    /// Per-lane interface state, keyed by track id. Every project starts with
+    /// the same ids (`T1`…`T4`), so it must not carry over to another project.
+    locked_tracks: Signal<HashSet<String>>,
+    track_names: Signal<HashMap<String, String>>,
+    renaming: Signal<Option<String>>,
+}
+
+impl Files {
+    /// Forget the lane locks, custom names and any rename in progress.
+    fn reset_lane_state(&self) {
+        let (mut locked, mut names, mut renaming) =
+            (self.locked_tracks, self.track_names, self.renaming);
+        locked.set(HashSet::new());
+        names.set(HashMap::new());
+        renaming.set(None);
+    }
+
+    /// Show the (new) project: library, timeline and the monitor.
+    fn sync(&self) {
+        // Only ever called when the project is replaced (open, new, recover).
+        self.reset_lane_state();
+        let (mut media, mut timeline, mut selected) = (self.media, self.timeline, self.selected);
+        media.set(editor::media_list(&self.project.borrow()));
+        timeline.set(editor::view(&self.project.borrow()));
+        selected.set(None);
+        match monitor::timeline_data(&self.project.borrow()) {
+            Some(d) => {
+                self.monitor.send(Cmd::SetTimeline(d));
+                self.monitor.send(Cmd::Seek(0.0));
+            }
+            None => self.monitor.send(Cmd::Clear),
+        }
+    }
+
+    fn say(&self, ok: bool, text: String) {
+        let mut file_msg = self.file_msg;
+        file_msg.set(Some((ok, text)));
+    }
+
+    /// Mark the current edit as the saved one.
+    fn mark_saved(&self) {
+        let mut saved_snap = self.saved_snap;
+        saved_snap.set(project_file::snapshot(&self.project.borrow()));
+    }
+
+    /// Replace the open project with `loaded`, from `path` (or unsaved).
+    fn install(&self, loaded: project_file::Loaded, path: Option<PathBuf>) {
+        *self.project.borrow_mut() = loaded.editor;
+        cutout::set_project_dir(path.as_deref().map(project_file::data_dir));
+        let mut project_path = self.project_path;
+        project_path.set(path.clone());
+        self.sync();
+        match &path {
+            Some(p) => {
+                self.mark_saved();
+                project_file::push_recent(p);
+            }
+            // Recovered work was never saved: leave it marked as changed.
+            None => {
+                let mut saved_snap = self.saved_snap;
+                saved_snap.set(project_file::snapshot(&concat_project::Editor::new()));
+            }
+        }
+        if loaded.missing.is_empty() {
+            self.say(true, match &path {
+                Some(p) => format!("Proyecto abierto: {}", project_file::name_of(p)),
+                None => "Trabajo recuperado. Guárdalo con «Guardar» para conservarlo.".to_string(),
+            });
+        } else {
+            let names: Vec<String> = loaded
+                .missing
+                .iter()
+                .take(3)
+                .map(|m| {
+                    std::path::Path::new(m)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| m.clone())
+                })
+                .collect();
+            let more = loaded.missing.len().saturating_sub(names.len());
+            self.say(false, format!(
+                "Faltan {} archivo(s) de medios: {}{}. Los clips que los usan no se verán hasta que los devuelvas a su sitio.",
+                loaded.missing.len(),
+                names.join(", "),
+                if more > 0 { format!(" y {more} más") } else { String::new() },
+            ));
+        }
+    }
+
+    fn new_project(&self) {
+        *self.project.borrow_mut() = concat_project::Editor::new();
+        cutout::set_project_dir(None);
+        let mut project_path = self.project_path;
+        project_path.set(None);
+        self.sync();
+        self.mark_saved();
+        project_file::clear_recovery();
+        self.say(true, "Proyecto nuevo.".to_string());
+    }
+
+    fn open_path(&self, path: PathBuf) {
+        match project_file::load(&path) {
+            Ok(loaded) => self.install(loaded, Some(path)),
+            Err(e) => self.say(false, format!("No se pudo abrir el proyecto: {e}")),
+        }
+    }
+
+    fn recover(&self) {
+        match project_file::load_recovery() {
+            Ok(loaded) => self.install(loaded, None),
+            Err(e) => self.say(false, format!("No se pudo recuperar el trabajo: {e}")),
+        }
+        let mut offer = self.recovery_offer;
+        offer.set(false);
+    }
+
+    /// Save to `path`, carrying the generated data along if the folder changes.
+    fn save_to(&self, path: PathBuf) -> bool {
+        let new_dir = project_file::data_dir(&path);
+        let old_dir = cutout::project_dir();
+        if old_dir != new_dir {
+            if let Err(e) = project_file::copy_dir(&old_dir, &new_dir) {
+                self.say(false, format!("No se pudieron copiar los datos del proyecto: {e}"));
+                return false;
+            }
+            cutout::set_project_dir(Some(new_dir));
+        }
+        match project_file::save(&self.project.borrow(), &path) {
+            Ok(()) => {
+                let mut project_path = self.project_path;
+                project_path.set(Some(path.clone()));
+                self.mark_saved();
+                project_file::push_recent(&path);
+                project_file::clear_recovery();
+                self.say(true, format!("Guardado: {}", project_file::name_of(&path)));
+                true
+            }
+            Err(e) => {
+                self.say(false, format!("No se pudo guardar: {e}"));
+                false
+            }
+        }
+    }
+
+    async fn save_as(&self) -> bool {
+        let current = (self.project_path)()
+            .map(|p| project_file::name_of(&p))
+            .unwrap_or_else(|| "proyecto".to_string());
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .add_filter("Proyecto de CoupCat", &[project_file::EXT])
+            .set_title("Guardar proyecto")
+            .set_file_name(format!("{current}.{}", project_file::EXT))
+            .save_file()
+            .await
+        else {
+            return false;
+        };
+        self.save_to(project_file::with_ext(file.path().to_path_buf()))
+    }
+
+    /// Save to the project's file, asking for one the first time.
+    async fn save(&self) -> bool {
+        match (self.project_path)() {
+            Some(path) => self.save_to(path),
+            None => self.save_as().await,
+        }
+    }
+
+    async fn open_dialog(&self) {
+        let Some(file) = rfd::AsyncFileDialog::new()
+            .add_filter("Proyecto de CoupCat", &[project_file::EXT])
+            .set_title("Abrir proyecto")
+            .pick_file()
+            .await
+        else {
+            return;
+        };
+        self.open_path(file.path().to_path_buf());
+    }
+
+    /// Do `action` now, replacing the open project.
+    async fn run(&self, action: Pending) {
+        match action {
+            Pending::New => self.new_project(),
+            Pending::Open => self.open_dialog().await,
+            Pending::Recent(path) => self.open_path(path),
+            Pending::Recover => self.recover(),
+        }
+    }
+
+    /// Save (or save as) from a button, one dialog at a time.
+    fn spawn_save(&self, as_new: bool) {
+        let me = self.clone();
+        spawn(async move {
+            if (me.busy)() {
+                return;
+            }
+            let mut busy = me.busy;
+            busy.set(true);
+            if as_new {
+                me.save_as().await;
+            } else {
+                me.save().await;
+            }
+            busy.set(false);
+        });
+    }
+
+    /// The unsaved-changes dialog: save first (`true`) or discard (`false`),
+    /// then do what was asked. A cancelled save keeps the dialog open.
+    fn resolve(&self, save_first: bool) {
+        let me = self.clone();
+        spawn(async move {
+            let mut pending = me.pending;
+            let Some(action) = pending() else { return };
+            if (me.busy)() {
+                return;
+            }
+            let mut busy = me.busy;
+            busy.set(true);
+            let go = if save_first { me.save().await } else { true };
+            if go {
+                pending.set(None);
+                me.run(action).await;
+            }
+            busy.set(false);
+        });
+    }
+
+    /// Ask to do `action`: straight away when nothing is unsaved, otherwise
+    /// after the person has chosen what to do with the changes.
+    fn request(&self, action: Pending, dirty: bool) {
+        if dirty {
+            let mut pending = self.pending;
+            pending.set(Some(action));
+            return;
+        }
+        let me = self.clone();
+        spawn(async move {
+            if (me.busy)() {
+                return;
+            }
+            let mut busy = me.busy;
+            busy.set(true);
+            me.run(action).await;
+            busy.set(false);
+        });
+    }
 }
 
 /// The window/taskbar icon, decoded from the embedded PNG.
@@ -157,6 +442,16 @@ fn app() -> Element {
     use_future(|| async move {
         let _ = dioxus::document::eval(
             r#"document.addEventListener('keydown', function(e){
+                if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+                    var k = (e.key || '').toLowerCase();
+                    var id = k === 's' ? 'btn-save' : k === 'o' ? 'btn-open' : k === 'n' ? 'btn-new' : null;
+                    if (id) {
+                        e.preventDefault();
+                        var btn = document.getElementById(id);
+                        if (btn) btn.click();
+                        return;
+                    }
+                }
                 if (e.code === 'Space') {
                     var t = document.activeElement;
                     var tag = t ? t.tagName : '';
@@ -357,6 +652,69 @@ fn app() -> Element {
             }
         });
     }
+
+    // ---- Project files: save / open / recents / unsaved changes / recovery ----
+    let project_path = use_signal(|| None::<PathBuf>);
+    let saved_snap = use_signal(|| project_file::snapshot(&project.borrow()));
+    let mut file_msg = use_signal(|| None::<(bool, String)>);
+    // Unsaved work from a previous session, waiting to be restored or dropped.
+    let mut recovery_offer = use_signal(project_file::has_recovery);
+    let mut pending = use_signal(|| None::<Pending>);
+    let busy = use_signal(|| false);
+    let mut menu_open = use_signal(|| false);
+    // True when the edit differs from the saved one. Recomputed only when the
+    // timeline changes (not on every playback tick).
+    let dirty = use_memo({
+        let project = project.clone();
+        move || {
+            let _ = timeline();
+            project_file::snapshot(&project.borrow()) != saved_snap()
+        }
+    });
+    let files = Files {
+        project: project.clone(),
+        monitor: monitor.clone(),
+        media,
+        timeline,
+        selected,
+        project_path,
+        saved_snap,
+        file_msg,
+        recovery_offer,
+        pending,
+        busy,
+        locked_tracks,
+        track_names,
+        renaming,
+    };
+    // Autosave: while there are unsaved changes, keep a recovery copy; when
+    // everything is saved, drop it. Paused while an old copy is on offer, so
+    // it is never overwritten before the person decides.
+    let autosave_project = project.clone();
+    use_future(move || {
+        let project = autosave_project.clone();
+        async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                if recovery_offer() {
+                    continue;
+                }
+                if dirty() {
+                    let _ = project_file::write_recovery(&project.borrow());
+                } else {
+                    project_file::clear_recovery();
+                }
+            }
+        }
+    });
+    // The window title names the project and marks unsaved changes.
+    use_effect(move || {
+        let name = project_path()
+            .map(|p| project_file::name_of(&p))
+            .unwrap_or_else(|| "Sin título".to_string());
+        let mark = if dirty() { "● " } else { "" };
+        dioxus::desktop::window().set_title(&format!("{mark}{name} — CoupCat"));
+    });
 
     let on_import = {
         let project = project.clone();
@@ -742,6 +1100,16 @@ fn app() -> Element {
     let tl_width = tl_seconds * PPS + 40.0;
     let playhead_x = pos() * PPS;
 
+    // Project file state for the top bar.
+    let dirty_now = dirty();
+    let proj_name = project_path()
+        .map(|p| project_file::name_of(&p))
+        .unwrap_or_else(|| "Sin título".to_string());
+    let proj_title = project_path()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "Proyecto sin guardar".to_string());
+    let recent_list = if menu_open() { project_file::recents() } else { Vec::new() };
+
     // Per-lane drawing state: lock/mute/hide and the CSS classes that show it.
     let locked_now = locked_tracks();
     let names_now = track_names();
@@ -813,6 +1181,77 @@ fn app() -> Element {
                     span { class: "name", "CoupCat" }
                     span { class: "milestone", "M2" }
                 }
+                div { class: "file-tools",
+                    button {
+                        id: "btn-new", class: "tool", title: "Proyecto nuevo (Ctrl+N)",
+                        onclick: {
+                            let f = files.clone();
+                            move |_| f.request(Pending::New, dirty())
+                        },
+                        "📄"
+                    }
+                    button {
+                        id: "btn-open", class: "tool", title: "Abrir proyecto (Ctrl+O)",
+                        onclick: {
+                            let f = files.clone();
+                            move |_| f.request(Pending::Open, dirty())
+                        },
+                        "📂"
+                    }
+                    button {
+                        id: "btn-save", class: "tool", title: "Guardar (Ctrl+S)",
+                        onclick: {
+                            let f = files.clone();
+                            move |_| f.spawn_save(false)
+                        },
+                        "💾 Guardar"
+                    }
+                    button {
+                        class: "tool", title: "Guardar como y proyectos recientes",
+                        onclick: move |_| menu_open.set(!menu_open()),
+                        "▾"
+                    }
+                    if menu_open() {
+                        div { class: "menu-backdrop", onclick: move |_| menu_open.set(false) }
+                        div { class: "file-menu",
+                            button {
+                                class: "menu-item",
+                                onclick: {
+                                    let f = files.clone();
+                                    move |_| {
+                                        menu_open.set(false);
+                                        f.spawn_save(true);
+                                    }
+                                },
+                                "Guardar como…"
+                            }
+                            div { class: "menu-sep", "Proyectos recientes" }
+                            if recent_list.is_empty() {
+                                div { class: "menu-empty", "Aún no hay proyectos recientes." }
+                            }
+                            for p in recent_list.iter() {
+                                button {
+                                    key: "{p.display()}",
+                                    class: "menu-item",
+                                    title: "{p.display()}",
+                                    onclick: {
+                                        let f = files.clone();
+                                        let p = p.clone();
+                                        move |_| {
+                                            menu_open.set(false);
+                                            f.request(Pending::Recent(p.clone()), dirty());
+                                        }
+                                    },
+                                    "{project_file::name_of(p)}"
+                                }
+                            }
+                        }
+                    }
+                    span { class: "proj-name", title: "{proj_title}",
+                        "{proj_name}"
+                        if dirty_now { span { class: "proj-dirty", title: "Hay cambios sin guardar", " ●" } }
+                    }
+                }
                 div { class: "transport",
                     button { class: "ctrl", disabled: !has_clip, onclick: on_playpause,
                         if playing() { "⏸" } else { "▶" }
@@ -828,6 +1267,64 @@ fn app() -> Element {
                     button { class: "tool export", disabled: !has_clip || exporting(), onclick: on_export, title: "Exportar a MP4", "⬇ Exportar" }
                 }
                 button { class: "import", onclick: on_import, "＋ Importar" }
+            }
+
+            if recovery_offer() {
+                div { class: "recovery",
+                    span { "Se encontró trabajo sin guardar de una sesión anterior." }
+                    button {
+                        class: "tool",
+                        onclick: {
+                            let f = files.clone();
+                            move |_| f.request(Pending::Recover, dirty())
+                        },
+                        "Recuperar"
+                    }
+                    button {
+                        class: "tool",
+                        onclick: move |_| {
+                            project_file::clear_recovery();
+                            recovery_offer.set(false);
+                        },
+                        "Descartar"
+                    }
+                }
+            }
+
+            if let Some((ok, msg)) = file_msg() {
+                div {
+                    class: if ok { "export-done ok" } else { "export-done err" },
+                    "{msg}"
+                    button { class: "dismiss", onclick: move |_| file_msg.set(None), "✕" }
+                }
+            }
+
+            if pending().is_some() {
+                div { class: "modal-back",
+                    div { class: "modal",
+                        div { class: "modal-title", "Hay cambios sin guardar" }
+                        p { class: "modal-text", "¿Quieres guardar el proyecto antes de continuar?" }
+                        div { class: "modal-btns",
+                            button {
+                                class: "tool export",
+                                onclick: {
+                                    let f = files.clone();
+                                    move |_| f.resolve(true)
+                                },
+                                "Guardar"
+                            }
+                            button {
+                                class: "tool",
+                                onclick: {
+                                    let f = files.clone();
+                                    move |_| f.resolve(false)
+                                },
+                                "No guardar"
+                            }
+                            button { class: "tool", onclick: move |_| pending.set(None), "Cancelar" }
+                        }
+                    }
+                }
             }
 
             if let Some(msg) = error() {
@@ -1697,6 +2194,42 @@ const STYLE: &str = r#"
         font-size: 11px; color: #9aa0b4; background: #262a36;
         padding: 2px 8px; border-radius: 999px;
     }
+    .file-tools { position: relative; display: flex; align-items: center; gap: 6px; }
+    .proj-name {
+        max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        font-size: 12px; color: #cfd2de; padding-left: 4px;
+    }
+    .proj-dirty { color: #ffd166; }
+    .menu-backdrop { position: fixed; inset: 0; z-index: 40; }
+    .file-menu {
+        position: absolute; top: 38px; left: 0; z-index: 50; min-width: 230px;
+        background: #1c1e26; border: 1px solid #2a2d38; border-radius: 10px;
+        padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+        display: flex; flex-direction: column; gap: 2px;
+    }
+    .menu-item {
+        text-align: left; padding: 7px 10px; border: none; border-radius: 6px;
+        background: transparent; color: #e8e9ee; font-size: 12px; cursor: pointer;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .menu-item:hover { background: #2d3142; }
+    .menu-sep { padding: 8px 10px 4px; font-size: 11px; color: #9aa0b4; border-top: 1px solid #2a2d38; margin-top: 4px; }
+    .menu-empty { padding: 4px 10px 8px; font-size: 11px; color: #5a5f72; }
+    .recovery {
+        display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 13px;
+        background: #2b2a1c; color: #ffd166; border-bottom: 1px solid #4a4527;
+    }
+    .modal-back {
+        position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,.55);
+        display: flex; align-items: center; justify-content: center;
+    }
+    .modal {
+        width: 380px; padding: 20px; background: #1c1e26; border: 1px solid #2a2d38;
+        border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,.6);
+    }
+    .modal-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+    .modal-text { font-size: 13px; color: #cfd2de; margin-bottom: 16px; }
+    .modal-btns { display: flex; gap: 8px; justify-content: flex-end; }
     .transport { display: flex; align-items: center; gap: 10px; }
     .ctrl {
         width: 40px; height: 32px; border: none; border-radius: 8px;

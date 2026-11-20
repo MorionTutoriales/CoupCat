@@ -959,6 +959,7 @@ dependencies = [
  "dioxus",
  "png 0.17.16",
  "rfd 0.15.4",
+ "serde_json",
  "tokio",
  "whisper-rs",
  "winresource",

@@ -53,6 +53,9 @@ pub enum Cmd {
     Play,
     /// Stop.
     Pause,
+    /// There is nothing to show any more (a new or empty project): drop the
+    /// timeline and the picture, so the monitor does not keep the last frame.
+    Clear,
 }
 
 /// What the UI renders from; the monitor thread writes it.
@@ -166,6 +169,20 @@ fn run(rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>) {
                     playing = false;
                     stop_audio(&mut audio);
                     set_playing(&shared, false);
+                }
+                Cmd::Clear => {
+                    data = None;
+                    time = 0.0;
+                    playing = false;
+                    stop_audio(&mut audio);
+                    let mut s = shared.lock().unwrap();
+                    s.frame = None;
+                    s.pos = 0.0;
+                    s.dur = 0.0;
+                    s.playing = false;
+                    s.loading = false;
+                    s.error = None;
+                    s.generation += 1;
                 }
             }
         }
