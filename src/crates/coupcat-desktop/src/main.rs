@@ -21,6 +21,7 @@ mod text;
 mod thumbs;
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -122,6 +123,13 @@ fn app() -> Element {
     let mut playing = use_signal(|| false);
     // True while the user is dragging the timeline playhead to scrub.
     let mut scrubbing = use_signal(|| false);
+    // Per-lane state the engine has no notion of (yet), keyed by track id:
+    // locked lanes refuse edits, and lanes can carry a custom name. Not saved
+    // with the project until project files exist.
+    let mut locked_tracks = use_signal(HashSet::<String>::new);
+    let mut track_names = use_signal(HashMap::<String, String>::new);
+    // The lane whose name is being edited, if any.
+    let mut renaming = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
@@ -371,11 +379,29 @@ fn app() -> Element {
                 return;
             };
             dragging_media.set(None);
+            // A locked lane refuses new clips.
+            if locked_tracks().contains(&track_id) {
+                return;
+            }
             if let Some(cid) =
                 editor::add_clip_on(&mut project.borrow_mut(), &media_id, &track_id, start)
             {
                 selected.set(Some(cid));
             }
+            timeline.set(editor::view(&project.borrow()));
+            if let Some(d) = monitor::timeline_data(&project.borrow()) {
+                monitor.send(Cmd::SetTimeline(d));
+            }
+        }
+    };
+
+    // Mute / hide a whole lane. These are engine edits (undoable, and honoured
+    // by the preview and the export alike), unlike lock and rename below.
+    let on_track_flag = {
+        let project = project.clone();
+        let monitor = monitor.clone();
+        move |track_id: String, flag: concat_project::commands::TrackFlag, value: bool| {
+            editor::set_track_flag(&mut project.borrow_mut(), &track_id, flag, value);
             timeline.set(editor::view(&project.borrow()));
             if let Some(d) = monitor::timeline_data(&project.borrow()) {
                 monitor.send(Cmd::SetTimeline(d));
@@ -429,7 +455,7 @@ fn app() -> Element {
         let project = project.clone();
         let monitor = monitor.clone();
         move |_| {
-            editor::split_at(&mut project.borrow_mut(), pos());
+            editor::split_at(&mut project.borrow_mut(), pos(), &locked_tracks());
             timeline.set(editor::view(&project.borrow()));
             if let Some(d) = monitor::timeline_data(&project.borrow()) {
                 monitor.send(Cmd::SetTimeline(d));
@@ -440,7 +466,7 @@ fn app() -> Element {
         let project = project.clone();
         let monitor = monitor.clone();
         move |_| {
-            editor::delete_at(&mut project.borrow_mut(), pos());
+            editor::delete_at(&mut project.borrow_mut(), pos(), &locked_tracks());
             timeline.set(editor::view(&project.borrow()));
             if let Some(d) = monitor::timeline_data(&project.borrow()) {
                 monitor.send(Cmd::SetTimeline(d));
@@ -544,10 +570,14 @@ fn app() -> Element {
                 // Where to drop: the lane under the cursor, else the clip's own.
                 // Resolve it (and clear drop_lane) BEFORE the minimal-move guard,
                 // so a vertical drag to another lane is never dropped on the floor.
-                let target_track = drop_lane()
+                let mut target_track = drop_lane()
                     .and_then(|li| timeline().track_ids.get(li).cloned())
                     .unwrap_or_else(|| d.track_id.clone());
                 drop_lane.set(None);
+                // A locked lane takes no clips from other lanes.
+                if locked_tracks().contains(&target_track) {
+                    target_track = d.track_id.clone();
+                }
                 let dpx = d.cur_px - d.start_px;
                 // Changing lanes counts as a move even with no horizontal travel.
                 let changed_track = d.mode == DragMode::Move && target_track != d.track_id;
@@ -660,6 +690,33 @@ fn app() -> Element {
     let tl_seconds = tl.duration.max(dur()).max(10.0);
     let tl_width = tl_seconds * PPS + 40.0;
     let playhead_x = pos() * PPS;
+
+    // Per-lane drawing state: lock/mute/hide and the CSS classes that show it.
+    let locked_now = locked_tracks();
+    let names_now = track_names();
+    let renaming_now = renaming();
+    let lane_count = tl.track_count.max(1);
+    let lane_locked: Vec<bool> = (0..lane_count)
+        .map(|l| tl.track_ids.get(l).is_some_and(|t| locked_now.contains(t)))
+        .collect();
+    let lane_cls: Vec<String> = (0..lane_count)
+        .map(|l| {
+            let mut c = String::from("lane");
+            if !lane_locked[l] && ((drop_now == Some(l) && drag_now.is_some()) || media_drag) {
+                c.push_str(" drop");
+            }
+            if lane_locked[l] {
+                c.push_str(" locked");
+            }
+            if tl.track_visible.get(l) == Some(&false) {
+                c.push_str(" hidden");
+            }
+            if tl.track_muted.get(l) == Some(&true) {
+                c.push_str(" muted");
+            }
+            c
+        })
+        .collect();
 
     rsx! {
         style { {STYLE} }
@@ -1217,6 +1274,87 @@ fn app() -> Element {
             }
 
             footer { class: "timeline",
+              div { class: "tl-main",
+                div { class: "tl-heads",
+                    div { class: "tl-heads-spacer" }
+                    {(0..lane_count).map(|lane| {
+                        let tid = tl.track_ids.get(lane).cloned().unwrap_or_default();
+                        let name = names_now
+                            .get(&tid)
+                            .cloned()
+                            .unwrap_or_else(|| format!("Pista {}", lane + 1));
+                        let muted = tl.track_muted.get(lane) == Some(&true);
+                        let hidden = tl.track_visible.get(lane) == Some(&false);
+                        let locked = lane_locked[lane];
+                        let editing = !tid.is_empty() && renaming_now.as_deref() == Some(tid.as_str());
+                        let mut flag_mute = on_track_flag.clone();
+                        let mut flag_hide = on_track_flag.clone();
+                        let (tid_mute, tid_hide, tid_lock, tid_edit, tid_name) =
+                            (tid.clone(), tid.clone(), tid.clone(), tid.clone(), tid.clone());
+                        rsx! {
+                            div { key: "head-{lane}", class: "tl-head",
+                                if editing {
+                                    input {
+                                        class: "tl-head-input",
+                                        value: "{name}",
+                                        oninput: move |e: FormEvent| {
+                                            track_names.write().insert(tid_name.clone(), e.value());
+                                        },
+                                        onkeydown: move |e: KeyboardEvent| {
+                                            let k = e.key().to_string();
+                                            if k == "Enter" || k == "Escape" {
+                                                // An empty name goes back to the default one.
+                                                track_names.write().retain(|_, v| !v.trim().is_empty());
+                                                renaming.set(None);
+                                            }
+                                        },
+                                        onblur: move |_| {
+                                            track_names.write().retain(|_, v| !v.trim().is_empty());
+                                            renaming.set(None);
+                                        },
+                                    }
+                                } else {
+                                    span {
+                                        class: "tl-head-name",
+                                        title: "Doble clic para renombrar",
+                                        ondoubleclick: move |_| {
+                                            renaming.set(Some(tid_edit.clone()));
+                                            let _ = dioxus::document::eval(
+                                                "setTimeout(function(){var i=document.querySelector('.tl-head-input');if(i){i.focus();i.select();}},0)",
+                                            );
+                                        },
+                                        "{name}"
+                                    }
+                                }
+                                div { class: "tl-head-btns",
+                                    button {
+                                        class: if muted { "tl-hbtn on" } else { "tl-hbtn" },
+                                        title: if muted { "Quitar silencio de la pista" } else { "Silenciar pista" },
+                                        onclick: move |_| flag_mute(tid_mute.clone(), concat_project::commands::TrackFlag::Muted, !muted),
+                                        if muted { "🔇" } else { "🔊" }
+                                    }
+                                    button {
+                                        class: if hidden { "tl-hbtn on" } else { "tl-hbtn" },
+                                        title: if hidden { "Mostrar pista" } else { "Ocultar pista" },
+                                        onclick: move |_| flag_hide(tid_hide.clone(), concat_project::commands::TrackFlag::Visible, hidden),
+                                        if hidden { "🚫" } else { "👁" }
+                                    }
+                                    button {
+                                        class: if locked { "tl-hbtn on" } else { "tl-hbtn" },
+                                        title: if locked { "Desbloquear pista" } else { "Bloquear pista" },
+                                        onclick: move |_| {
+                                            let mut set = locked_tracks.write();
+                                            if !set.remove(&tid_lock) {
+                                                set.insert(tid_lock.clone());
+                                            }
+                                        },
+                                        if locked { "🔒" } else { "🔓" }
+                                    }
+                                }
+                            }
+                        }
+                    })}
+                }
                 div {
                     class: "tl-scroll",
                     onmousemove: on_drag_move,
@@ -1257,7 +1395,7 @@ fn app() -> Element {
                         }
                         for lane in 0..tl.track_count.max(1) {
                             div {
-                                class: if (drop_now == Some(lane) && drag_now.is_some()) || media_drag { "lane drop" } else { "lane" },
+                                class: "{lane_cls[lane]}",
                                 onmousedown: {
                                     let monitor = monitor.clone();
                                     move |e: MouseEvent| {
@@ -1307,6 +1445,7 @@ fn app() -> Element {
                                             } else {
                                                 ""
                                             };
+                                            let clip_locked = locked_now.contains(&c.track_id);
                                             let mk = |mode: DragMode| {
                                                 let cid = c.id.clone();
                                                 let tid = c.track_id.clone();
@@ -1314,6 +1453,10 @@ fn app() -> Element {
                                                 move |e: MouseEvent| {
                                                     e.stop_propagation();
                                                     selected.set(Some(cid.clone()));
+                                                    // A locked lane's clips can be selected, not edited.
+                                                    if clip_locked {
+                                                        return;
+                                                    }
                                                     let x = e.page_coordinates().x;
                                                     drag.set(Some(Drag {
                                                         mode,
@@ -1369,6 +1512,7 @@ fn app() -> Element {
                         }
                     }
                 }
+              }
                 div { class: "tl-status",
                     "Arrastra el cabezal (o la regla) para moverte · el cuerpo del clip para moverlo · los bordes para recortar · {tl.clip_count} clip(s) · {tl.track_count} pista(s)"
                 }
@@ -1599,7 +1743,39 @@ const STYLE: &str = r#"
         height: 180px; display: flex; flex-direction: column;
         background: #1c1e26; border-top: 1px solid #2a2d38;
     }
-    .tl-scroll { position: relative; flex: 1; overflow-x: auto; overflow-y: hidden; padding: 8px; }
+    .tl-main { flex: 1; display: flex; min-height: 0; }
+    .tl-scroll { position: relative; flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; padding: 8px; }
+    .tl-heads {
+        flex: none; width: 150px; padding: 8px 0 8px 8px; display: flex;
+        flex-direction: column; gap: 4px; background: #191b22; border-right: 1px solid #2a2d38;
+    }
+    .tl-heads-spacer { flex: none; height: 24px; }
+    .tl-head {
+        flex: none; height: 40px; display: flex; align-items: center; gap: 4px;
+        padding: 0 4px 0 8px; background: #12141a; border: 1px solid #22252f;
+        border-radius: 6px 0 0 6px; overflow: hidden;
+    }
+    .tl-head-name {
+        flex: 1; min-width: 0; font-size: 11px; color: #cfd2de; cursor: text;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tl-head-input {
+        flex: 1; min-width: 0; width: 100%; font-size: 11px; color: #fff; background: #0e0f13;
+        border: 1px solid #6c5ce7; border-radius: 4px; padding: 2px 4px; outline: none;
+    }
+    .tl-head-btns { display: flex; gap: 1px; flex: none; }
+    .tl-hbtn {
+        width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px;
+        background: transparent; color: #9aa0b4; font-size: 11px; line-height: 1; cursor: pointer;
+    }
+    .tl-hbtn:hover { background: #2d3142; }
+    .tl-hbtn.on { background: #6c5ce7; color: #fff; }
+    .lane.hidden .clip { opacity: .4; filter: grayscale(.7); }
+    .lane.muted .clip { box-shadow: inset 0 0 0 1px rgba(255,92,122,.5), 0 1px 3px rgba(0,0,0,.4); }
+    .lane.locked {
+        background-image: repeating-linear-gradient(135deg, transparent 0 8px, rgba(255,255,255,.04) 8px 16px);
+    }
+    .lane.locked .clip { cursor: not-allowed; }
     .lanes { display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
     .lane {
         position: relative; height: 40px; background: #12141a;
