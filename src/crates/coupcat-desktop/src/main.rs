@@ -22,6 +22,7 @@ mod text;
 mod thumbs;
 
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::Duration;
@@ -33,6 +34,12 @@ use monitor::{Cmd, Monitor, fmt_time};
 
 /// Pixels per second on the timeline.
 const PPS: f64 = 50.0;
+
+/// Timeline panel height: tall enough for the four starter lanes, the ruler and
+/// the status bar; the user can drag it between these bounds.
+const TL_HEIGHT_DEFAULT: f64 = 270.0;
+const TL_HEIGHT_MIN: f64 = 130.0;
+const TL_HEIGHT_MAX: f64 = 520.0;
 
 /// Built-in transition kinds the engine resolves on a cut: `(id, label)`.
 const TRANSITIONS: &[(&str, &str)] = &[
@@ -101,11 +108,27 @@ struct Files {
     recovery_offer: Signal<bool>,
     pending: Signal<Option<Pending>>,
     busy: Signal<bool>,
+    /// Per-lane interface state, keyed by track id. Every project starts with
+    /// the same ids (`T1`…`T4`), so it must not carry over to another project.
+    locked_tracks: Signal<HashSet<String>>,
+    track_names: Signal<HashMap<String, String>>,
+    renaming: Signal<Option<String>>,
 }
 
 impl Files {
+    /// Forget the lane locks, custom names and any rename in progress.
+    fn reset_lane_state(&self) {
+        let (mut locked, mut names, mut renaming) =
+            (self.locked_tracks, self.track_names, self.renaming);
+        locked.set(HashSet::new());
+        names.set(HashMap::new());
+        renaming.set(None);
+    }
+
     /// Show the (new) project: library, timeline and the monitor.
     fn sync(&self) {
+        // Only ever called when the project is replaced (open, new, recover).
+        self.reset_lane_state();
         let (mut media, mut timeline, mut selected) = (self.media, self.timeline, self.selected);
         media.set(editor::media_list(&self.project.borrow()));
         timeline.set(editor::view(&self.project.borrow()));
@@ -391,6 +414,17 @@ fn app() -> Element {
     let mut playing = use_signal(|| false);
     // True while the user is dragging the timeline playhead to scrub.
     let mut scrubbing = use_signal(|| false);
+    // Height of the timeline panel in pixels (drag its top edge to change it),
+    // and the in-progress resize: (mouse y at the start, height at the start).
+    let mut tl_height = use_signal(|| TL_HEIGHT_DEFAULT);
+    let mut resizing = use_signal(|| None::<(f64, f64)>);
+    // Per-lane state the engine has no notion of (yet), keyed by track id:
+    // locked lanes refuse edits, and lanes can carry a custom name. Not saved
+    // with the project until project files exist.
+    let mut locked_tracks = use_signal(HashSet::<String>::new);
+    let mut track_names = use_signal(HashMap::<String, String>::new);
+    // The lane whose name is being edited, if any.
+    let mut renaming = use_signal(|| None::<String>);
     let mut loading = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
@@ -426,7 +460,23 @@ fn app() -> Element {
                     var b = document.querySelector('.ctrl');
                     if (b && !b.disabled) b.click();
                 }
-            });"#,
+            });
+            /* The track headers have no scrollbar: they follow the lanes' vertical
+               scroll, and the wheel over them scrolls the lanes. */
+            document.addEventListener('scroll', function(e){
+                var t = e.target;
+                if (t && t.classList && t.classList.contains('tl-scroll')) {
+                    var h = document.querySelector('.tl-heads');
+                    if (h) h.scrollTop = t.scrollTop;
+                }
+            }, true);
+            document.addEventListener('wheel', function(e){
+                var t = e.target;
+                if (t && t.closest && t.closest('.tl-heads')) {
+                    var s = document.querySelector('.tl-scroll');
+                    if (s) s.scrollTop += e.deltaY;
+                }
+            }, { passive: true });"#,
         );
     });
 
@@ -633,6 +683,9 @@ fn app() -> Element {
         recovery_offer,
         pending,
         busy,
+        locked_tracks,
+        track_names,
+        renaming,
     };
     // Autosave: while there are unsaved changes, keep a recovery copy; when
     // everything is saved, drop it. Paused while an old copy is on offer, so
@@ -710,11 +763,54 @@ fn app() -> Element {
                 return;
             };
             dragging_media.set(None);
+            // A locked lane refuses new clips.
+            if locked_tracks().contains(&track_id) {
+                return;
+            }
             if let Some(cid) =
                 editor::add_clip_on(&mut project.borrow_mut(), &media_id, &track_id, start)
             {
                 selected.set(Some(cid));
             }
+            timeline.set(editor::view(&project.borrow()));
+            if let Some(d) = monitor::timeline_data(&project.borrow()) {
+                monitor.send(Cmd::SetTimeline(d));
+            }
+        }
+    };
+
+    // Mute / hide a whole lane. These are engine edits (undoable, and honoured
+    // by the preview and the export alike), unlike lock and rename below.
+    let on_track_flag = {
+        let project = project.clone();
+        let monitor = monitor.clone();
+        move |track_id: String, flag: concat_project::commands::TrackFlag, value: bool| {
+            editor::set_track_flag(&mut project.borrow_mut(), &track_id, flag, value);
+            timeline.set(editor::view(&project.borrow()));
+            if let Some(d) = monitor::timeline_data(&project.borrow()) {
+                monitor.send(Cmd::SetTimeline(d));
+            }
+        }
+    };
+
+    // Add an empty lane at the end of the list, or delete an empty one (see
+    // `removable` below).
+    let on_add_track = {
+        let project = project.clone();
+        let monitor = monitor.clone();
+        move |_| {
+            editor::add_track(&mut project.borrow_mut());
+            timeline.set(editor::view(&project.borrow()));
+            if let Some(d) = monitor::timeline_data(&project.borrow()) {
+                monitor.send(Cmd::SetTimeline(d));
+            }
+        }
+    };
+    let on_remove_track = {
+        let project = project.clone();
+        let monitor = monitor.clone();
+        move |track_id: String| {
+            editor::remove_track(&mut project.borrow_mut(), &track_id);
             timeline.set(editor::view(&project.borrow()));
             if let Some(d) = monitor::timeline_data(&project.borrow()) {
                 monitor.send(Cmd::SetTimeline(d));
@@ -768,7 +864,7 @@ fn app() -> Element {
         let project = project.clone();
         let monitor = monitor.clone();
         move |_| {
-            editor::split_at(&mut project.borrow_mut(), pos());
+            editor::split_at(&mut project.borrow_mut(), pos(), &locked_tracks());
             timeline.set(editor::view(&project.borrow()));
             if let Some(d) = monitor::timeline_data(&project.borrow()) {
                 monitor.send(Cmd::SetTimeline(d));
@@ -779,7 +875,7 @@ fn app() -> Element {
         let project = project.clone();
         let monitor = monitor.clone();
         move |_| {
-            editor::delete_at(&mut project.borrow_mut(), pos());
+            editor::delete_at(&mut project.borrow_mut(), pos(), &locked_tracks());
             timeline.set(editor::view(&project.borrow()));
             if let Some(d) = monitor::timeline_data(&project.borrow()) {
                 monitor.send(Cmd::SetTimeline(d));
@@ -883,10 +979,14 @@ fn app() -> Element {
                 // Where to drop: the lane under the cursor, else the clip's own.
                 // Resolve it (and clear drop_lane) BEFORE the minimal-move guard,
                 // so a vertical drag to another lane is never dropped on the floor.
-                let target_track = drop_lane()
+                let mut target_track = drop_lane()
                     .and_then(|li| timeline().track_ids.get(li).cloned())
                     .unwrap_or_else(|| d.track_id.clone());
                 drop_lane.set(None);
+                // A locked lane takes no clips from other lanes.
+                if locked_tracks().contains(&target_track) {
+                    target_track = d.track_id.clone();
+                }
                 let dpx = d.cur_px - d.start_px;
                 // Changing lanes counts as a move even with no horizontal travel.
                 let changed_track = d.mode == DragMode::Move && target_track != d.track_id;
@@ -1010,15 +1110,69 @@ fn app() -> Element {
         .unwrap_or_else(|| "Proyecto sin guardar".to_string());
     let recent_list = if menu_open() { project_file::recents() } else { Vec::new() };
 
+    // Per-lane drawing state: lock/mute/hide and the CSS classes that show it.
+    let locked_now = locked_tracks();
+    let names_now = track_names();
+    let renaming_now = renaming();
+    let lane_count = tl.track_count.max(1);
+    let lane_locked: Vec<bool> = (0..lane_count)
+        .map(|l| tl.track_ids.get(l).is_some_and(|t| locked_now.contains(t)))
+        .collect();
+    // The lane "－ Pista" would delete: the bottom-most empty, unlocked one, and
+    // never the last remaining lane.
+    let removable: Option<String> = if tl.track_count > 1 {
+        (0..tl.track_count)
+            .rev()
+            .find(|&l| !lane_locked[l] && !tl.clips.iter().any(|c| c.track == l))
+            .and_then(|l| tl.track_ids.get(l).cloned())
+    } else {
+        None
+    };
+    let lane_cls: Vec<String> = (0..lane_count)
+        .map(|l| {
+            let mut c = String::from("lane");
+            if !lane_locked[l] && ((drop_now == Some(l) && drag_now.is_some()) || media_drag) {
+                c.push_str(" drop");
+            }
+            if lane_locked[l] {
+                c.push_str(" locked");
+            }
+            if tl.track_visible.get(l) == Some(&false) {
+                c.push_str(" hidden");
+            }
+            if tl.track_muted.get(l) == Some(&true) {
+                c.push_str(" muted");
+            }
+            c
+        })
+        .collect();
+
     rsx! {
         style { {STYLE} }
         div { class: "app",
+            onmousemove: move |e: MouseEvent| {
+                if let Some((y0, h0)) = resizing() {
+                    // The button was let go outside the window (no mouseup reached
+                    // us): stop, instead of leaving the panel stuck to the pointer.
+                    // (Not `onmouseleave`: it fires on leaving any child element.)
+                    if !e.held_buttons().contains(dioxus::html::input_data::MouseButton::Primary) {
+                        resizing.set(None);
+                        return;
+                    }
+                    // The panel sits at the bottom, so dragging up makes it taller.
+                    let h = (h0 + (y0 - e.page_coordinates().y)).clamp(TL_HEIGHT_MIN, TL_HEIGHT_MAX);
+                    tl_height.set(h);
+                }
+            },
             onmouseup: move |_| {
                 if dragging_media().is_some() {
                     dragging_media.set(None);
                 }
                 if scrubbing() {
                     scrubbing.set(false);
+                }
+                if resizing().is_some() {
+                    resizing.set(None);
                 }
             },
             header { class: "topbar",
@@ -1694,7 +1848,99 @@ fn app() -> Element {
                 }
             }
 
-            footer { class: "timeline",
+            footer { class: "timeline", style: "height: {tl_height()}px;",
+              div {
+                  class: "tl-resizer",
+                  title: "Arrastra para cambiar la altura de la línea de tiempo",
+                  onmousedown: move |e: MouseEvent| {
+                      e.stop_propagation();
+                      resizing.set(Some((e.page_coordinates().y, tl_height())));
+                  },
+              }
+              div { class: "tl-main",
+                div { class: "tl-heads",
+                    div { class: "tl-heads-spacer" }
+                    {(0..lane_count).map(|lane| {
+                        let tid = tl.track_ids.get(lane).cloned().unwrap_or_default();
+                        let name = names_now
+                            .get(&tid)
+                            .cloned()
+                            .unwrap_or_else(|| format!("Pista {}", lane + 1));
+                        let muted = tl.track_muted.get(lane) == Some(&true);
+                        let hidden = tl.track_visible.get(lane) == Some(&false);
+                        let locked = lane_locked[lane];
+                        let editing = !tid.is_empty() && renaming_now.as_deref() == Some(tid.as_str());
+                        let mut flag_mute = on_track_flag.clone();
+                        let mut flag_hide = on_track_flag.clone();
+                        let (tid_mute, tid_hide, tid_lock, tid_edit, tid_name) =
+                            (tid.clone(), tid.clone(), tid.clone(), tid.clone(), tid.clone());
+                        rsx! {
+                            div { key: "head-{lane}", class: "tl-head",
+                                if editing {
+                                    input {
+                                        class: "tl-head-input",
+                                        value: "{name}",
+                                        oninput: move |e: FormEvent| {
+                                            track_names.write().insert(tid_name.clone(), e.value());
+                                        },
+                                        onkeydown: move |e: KeyboardEvent| {
+                                            let k = e.key().to_string();
+                                            if k == "Enter" || k == "Escape" {
+                                                // An empty name goes back to the default one.
+                                                track_names.write().retain(|_, v| !v.trim().is_empty());
+                                                renaming.set(None);
+                                            }
+                                        },
+                                        onblur: move |_| {
+                                            track_names.write().retain(|_, v| !v.trim().is_empty());
+                                            renaming.set(None);
+                                        },
+                                    }
+                                } else {
+                                    span {
+                                        class: "tl-head-name",
+                                        title: "Doble clic para renombrar",
+                                        ondoubleclick: move |_| {
+                                            renaming.set(Some(tid_edit.clone()));
+                                            let _ = dioxus::document::eval(
+                                                "setTimeout(function(){var i=document.querySelector('.tl-head-input');if(i){i.focus();i.select();}},0)",
+                                            );
+                                        },
+                                        "{name}"
+                                    }
+                                }
+                                div { class: "tl-head-btns",
+                                    button {
+                                        class: if muted { "tl-hbtn on" } else { "tl-hbtn" },
+                                        title: if muted { "Quitar silencio de la pista" } else { "Silenciar pista" },
+                                        onclick: move |_| flag_mute(tid_mute.clone(), concat_project::commands::TrackFlag::Muted, !muted),
+                                        if muted { "🔇" } else { "🔊" }
+                                    }
+                                    button {
+                                        class: if hidden { "tl-hbtn on" } else { "tl-hbtn" },
+                                        title: if hidden { "Mostrar pista" } else { "Ocultar pista" },
+                                        onclick: move |_| flag_hide(tid_hide.clone(), concat_project::commands::TrackFlag::Visible, hidden),
+                                        if hidden { "🚫" } else { "👁" }
+                                    }
+                                    button {
+                                        class: if locked { "tl-hbtn on" } else { "tl-hbtn" },
+                                        title: if locked { "Desbloquear pista" } else { "Bloquear pista" },
+                                        onclick: move |_| {
+                                            let mut set = locked_tracks.write();
+                                            if !set.remove(&tid_lock) {
+                                                set.insert(tid_lock.clone());
+                                            }
+                                        },
+                                        if locked { "🔒" } else { "🔓" }
+                                    }
+                                }
+                            }
+                        }
+                    })}
+                    // Stands in for the horizontal scrollbar of the lanes, so both
+                    // columns reach the same scroll range.
+                    div { class: "tl-heads-end" }
+                }
                 div {
                     class: "tl-scroll",
                     onmousemove: on_drag_move,
@@ -1722,6 +1968,19 @@ fn app() -> Element {
                                     }
                                 }
                             },
+                            // The playhead's handle lives in the ruler, which stays put when
+                            // the lanes scroll vertically, so it can always be grabbed.
+                            if has_clip {
+                                div { class: "tl-ruler-ph", style: "left: {playhead_x}px;",
+                                    div {
+                                        class: "tl-playhead-grab",
+                                        onmousedown: move |e: MouseEvent| {
+                                            e.stop_propagation();
+                                            scrubbing.set(true);
+                                        },
+                                    }
+                                }
+                            }
                             for i in 0..=(tl_seconds.ceil() as i64) {
                                 div {
                                     key: "tick-{i}",
@@ -1735,7 +1994,7 @@ fn app() -> Element {
                         }
                         for lane in 0..tl.track_count.max(1) {
                             div {
-                                class: if (drop_now == Some(lane) && drag_now.is_some()) || media_drag { "lane drop" } else { "lane" },
+                                class: "{lane_cls[lane]}",
                                 onmousedown: {
                                     let monitor = monitor.clone();
                                     move |e: MouseEvent| {
@@ -1785,6 +2044,7 @@ fn app() -> Element {
                                             } else {
                                                 ""
                                             };
+                                            let clip_locked = locked_now.contains(&c.track_id);
                                             let mk = |mode: DragMode| {
                                                 let cid = c.id.clone();
                                                 let tid = c.track_id.clone();
@@ -1792,6 +2052,10 @@ fn app() -> Element {
                                                 move |e: MouseEvent| {
                                                     e.stop_propagation();
                                                     selected.set(Some(cid.clone()));
+                                                    // A locked lane's clips can be selected, not edited.
+                                                    if clip_locked {
+                                                        return;
+                                                    }
                                                     let x = e.page_coordinates().x;
                                                     drag.set(Some(Drag {
                                                         mode,
@@ -1834,21 +2098,36 @@ fn app() -> Element {
                                     }
                                 }
                         if has_clip {
-                            div {
-                                class: "tl-playhead", style: "left: {playhead_x}px;",
-                                div {
-                                    class: "tl-playhead-grab",
-                                    onmousedown: move |e: MouseEvent| {
-                                        e.stop_propagation();
-                                        scrubbing.set(true);
-                                    },
-                                }
-                            }
+                            div { class: "tl-playhead", style: "left: {playhead_x}px;" }
                         }
                     }
                 }
+              }
                 div { class: "tl-status",
-                    "Arrastra el cabezal (o la regla) para moverte · el cuerpo del clip para moverlo · los bordes para recortar · {tl.clip_count} clip(s) · {tl.track_count} pista(s)"
+                    span { class: "tl-status-text",
+                        "Arrastra el cabezal (o la regla) para moverte · el cuerpo del clip para moverlo · los bordes para recortar · {tl.clip_count} clip(s) · {tl.track_count} pista(s)"
+                    }
+                    button {
+                        class: "tl-sbtn",
+                        title: "Añadir una pista vacía al final de la lista",
+                        onclick: on_add_track,
+                        "＋ Pista"
+                    }
+                    button {
+                        class: "tl-sbtn",
+                        disabled: removable.is_none(),
+                        title: "Quitar la última pista vacía (no se quita si tiene clips, está bloqueada o es la única)",
+                        onclick: {
+                            let mut remove = on_remove_track.clone();
+                            let target = removable.clone();
+                            move |_| {
+                                if let Some(id) = target.clone() {
+                                    remove(id);
+                                }
+                            }
+                        },
+                        "－ Pista vacía"
+                    }
                 }
             }
         }
@@ -2110,11 +2389,57 @@ const STYLE: &str = r#"
     .scrubber { width: 100%; accent-color: #6c5ce7; cursor: pointer; }
     .scrubber:disabled { opacity: .4; }
     .timeline {
-        height: 180px; display: flex; flex-direction: column;
+        position: relative; height: 270px; display: flex; flex-direction: column;
         background: #1c1e26; border-top: 1px solid #2a2d38;
     }
-    .tl-scroll { position: relative; flex: 1; overflow-x: auto; overflow-y: hidden; padding: 8px; }
-    .lanes { display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
+    .tl-resizer {
+        flex: none; position: relative; z-index: 30; height: 6px; margin-top: -4px;
+        cursor: ns-resize; transition: background .1s;
+    }
+    .tl-resizer:hover { background: #6c5ce7; }
+    .tl-main { flex: 1; display: flex; min-height: 0; }
+    .tl-scroll { position: relative; flex: 1; min-width: 0; overflow: auto; padding: 8px; }
+    .tl-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+    .tl-scroll::-webkit-scrollbar-track { background: #15161d; }
+    .tl-scroll::-webkit-scrollbar-thumb { background: #3a3f4f; border-radius: 6px; border: 2px solid #15161d; }
+    .tl-scroll::-webkit-scrollbar-thumb:hover { background: #4a5066; }
+    .tl-scroll::-webkit-scrollbar-corner { background: #15161d; }
+    .tl-heads {
+        flex: none; width: 150px; padding: 0 0 8px 8px; display: flex; overflow: hidden;
+        flex-direction: column; gap: 4px; background: #191b22; border-right: 1px solid #2a2d38;
+    }
+    /* Follows the lanes' vertical scroll (set from script); this one has no bar of its own. */
+    .tl-heads-spacer {
+        flex: none; height: 32px; position: sticky; top: 0; z-index: 3; background: #191b22;
+    }
+    .tl-heads-end { flex: none; height: 8px; }
+    .tl-head {
+        flex: none; height: 40px; display: flex; align-items: center; gap: 4px;
+        padding: 0 4px 0 8px; background: #12141a; border: 1px solid #22252f;
+        border-radius: 6px 0 0 6px; overflow: hidden;
+    }
+    .tl-head-name {
+        flex: 1; min-width: 0; font-size: 11px; color: #cfd2de; cursor: text;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .tl-head-input {
+        flex: 1; min-width: 0; width: 100%; font-size: 11px; color: #fff; background: #0e0f13;
+        border: 1px solid #6c5ce7; border-radius: 4px; padding: 2px 4px; outline: none;
+    }
+    .tl-head-btns { display: flex; gap: 1px; flex: none; }
+    .tl-hbtn {
+        width: 20px; height: 20px; padding: 0; border: none; border-radius: 4px;
+        background: transparent; color: #9aa0b4; font-size: 11px; line-height: 1; cursor: pointer;
+    }
+    .tl-hbtn:hover { background: #2d3142; }
+    .tl-hbtn.on { background: #6c5ce7; color: #fff; }
+    .lane.hidden .clip { opacity: .4; filter: grayscale(.7); }
+    .lane.muted .clip { box-shadow: inset 0 0 0 1px rgba(255,92,122,.5), 0 1px 3px rgba(0,0,0,.4); }
+    .lane.locked {
+        background-image: repeating-linear-gradient(135deg, transparent 0 8px, rgba(255,255,255,.04) 8px 16px);
+    }
+    .lane.locked .clip { cursor: not-allowed; }
+    .lanes { position: relative; display: flex; flex-direction: column; gap: 4px; min-height: 100%; }
     .lane {
         position: relative; height: 40px; background: #12141a;
         border-radius: 6px; border: 1px solid #22252f;
@@ -2149,10 +2474,15 @@ const STYLE: &str = r#"
         font-size: 11px; color: #e8e9ee; white-space: nowrap;
         text-overflow: ellipsis; overflow: hidden; pointer-events: none;
     }
+    /* Sticky: stays at the top while the lanes scroll vertically underneath. */
     .tl-ruler {
-        position: relative; flex: none; height: 22px; margin-bottom: 2px;
+        position: sticky; top: 0; z-index: 6; flex: none; height: 22px; margin-bottom: 2px;
         background: #15161d; border-radius: 6px; border: 1px solid #22252f;
-        cursor: pointer; overflow: hidden; user-select: none;
+        box-shadow: 0 3px 0 #1c1e26; cursor: pointer; overflow: hidden; user-select: none;
+    }
+    .tl-ruler-ph {
+        position: absolute; top: 0; bottom: 0; width: 2px; background: #ff5c7a;
+        pointer-events: none; z-index: 2;
     }
     .tl-ruler .tick { position: absolute; top: 10px; bottom: 0; width: 1px; background: #2a2d38; }
     .tl-ruler .tick.major { top: 6px; background: #3a3f4f; }
@@ -2161,20 +2491,28 @@ const STYLE: &str = r#"
         color: #9aa0b4; white-space: nowrap; pointer-events: none;
     }
     .lanes.scrubbing .clip { pointer-events: none; }
+    /* Below the ruler (24px = its height and margin), full height of the lanes. */
     .tl-playhead {
-        position: absolute; top: 8px; bottom: 8px; width: 2px; background: #ff5c7a;
+        position: absolute; top: 24px; bottom: 0; width: 2px; background: #ff5c7a;
         box-shadow: 0 0 6px #ff5c7a; pointer-events: none; z-index: 5;
     }
     .tl-playhead-grab {
-        position: absolute; top: -3px; left: -6px; width: 14px; height: 13px;
+        position: absolute; top: 1px; left: -6px; width: 14px; height: 13px;
         background: #ff5c7a; border-radius: 3px 3px 5px 5px; cursor: ew-resize;
         pointer-events: auto; box-shadow: 0 1px 3px rgba(0,0,0,.5);
     }
     .tl-playhead-grab:hover { background: #ff7a93; }
     .tl-status {
-        padding: 6px 16px; font-size: 11px; color: #9aa0b4;
-        border-top: 1px solid #2a2d38; background: #191b22;
+        display: flex; align-items: center; gap: 8px; padding: 4px 16px; font-size: 11px;
+        color: #9aa0b4; border-top: 1px solid #2a2d38; background: #191b22;
     }
+    .tl-status-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tl-sbtn {
+        flex: none; height: 22px; padding: 0 10px; border: none; border-radius: 6px;
+        background: #262a36; color: #e8e9ee; font-size: 11px; cursor: pointer;
+    }
+    .tl-sbtn:hover:not(:disabled) { background: #303544; }
+    .tl-sbtn:disabled { opacity: .35; cursor: default; }
     .tool.export { background: #2f7a55; }
     .tool.export:hover:not(:disabled) { background: #39925f; }
     .export-bar {

@@ -8,11 +8,11 @@
 //! operations the M2 UI drives and a cheap [`TimelineView`] snapshot the UI
 //! renders from.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use concat_media::MediaInfo;
-use concat_project::commands::{ClipMove, ClipPatch, NewMedia, TrimEdge};
+use concat_project::commands::{ClipMove, ClipPatch, NewMedia, TrackFlag, TrimEdge};
 use concat_project::model::{ClipKind, MediaKind, Transition};
 use concat_project::{Command, Editor};
 
@@ -44,6 +44,10 @@ pub struct TimelineView {
     pub track_count: usize,
     /// Track ids, top to bottom (for dropping a clip onto a lane).
     pub track_ids: Vec<String>,
+    /// Per lane: whether its audio is silenced (same order as `track_ids`).
+    pub track_muted: Vec<bool>,
+    /// Per lane: whether its video reaches the composite (same order).
+    pub track_visible: Vec<bool>,
     pub clips: Vec<ClipView>,
     /// The timeline's end, in seconds.
     pub duration: f64,
@@ -171,21 +175,22 @@ pub fn add_clip_on(editor: &mut Editor, media_id: &str, track_id: &str, start: f
         .created_id
 }
 
-/// Clip ids whose span contains `t` seconds.
-pub fn clips_at(editor: &Editor, t: f64) -> Vec<String> {
+/// Clip ids whose span contains `t` seconds, leaving out the clips of any lane
+/// in `locked` (a locked lane's clips are not edited).
+pub fn clips_at(editor: &Editor, t: f64, locked: &HashSet<String>) -> Vec<String> {
     editor
         .project()
         .active()
         .clips
         .iter()
-        .filter(|c| t >= c.start && t < c.start + c.duration)
+        .filter(|c| t >= c.start && t < c.start + c.duration && !locked.contains(&c.track_id))
         .map(|c| c.id.clone())
         .collect()
 }
 
-/// Split every clip under `t` at `t`.
-pub fn split_at(editor: &mut Editor, t: f64) -> bool {
-    let clip_ids = clips_at(editor, t);
+/// Split every clip under `t` at `t` (except those on locked lanes).
+pub fn split_at(editor: &mut Editor, t: f64, locked: &HashSet<String>) -> bool {
+    let clip_ids = clips_at(editor, t, locked);
     if clip_ids.is_empty() {
         return false;
     }
@@ -195,9 +200,9 @@ pub fn split_at(editor: &mut Editor, t: f64) -> bool {
         .unwrap_or(false)
 }
 
-/// Ripple-delete every clip under `t`.
-pub fn delete_at(editor: &mut Editor, t: f64) -> bool {
-    let clip_ids = clips_at(editor, t);
+/// Ripple-delete every clip under `t` (except those on locked lanes).
+pub fn delete_at(editor: &mut Editor, t: f64, locked: &HashSet<String>) -> bool {
+    let clip_ids = clips_at(editor, t, locked);
     if clip_ids.is_empty() {
         return false;
     }
@@ -514,6 +519,40 @@ pub fn apply_transition(
         .unwrap_or(false)
 }
 
+/// Add an empty lane at the end of the lane list. The engine stores the stack
+/// bottom first and draws the last lane on top of the others, so this is the
+/// lane at the bottom of the list on screen and in front in the composition.
+pub fn add_track(editor: &mut Editor) -> bool {
+    editor
+        .apply(Command::AddTrack { bottom: false })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
+/// Delete a lane. The engine removes its clips too and refuses to go below
+/// one lane, so callers only offer this for an empty lane.
+pub fn remove_track(editor: &mut Editor, track_id: &str) -> bool {
+    editor
+        .apply(Command::RemoveTrack {
+            track_id: track_id.to_string(),
+        })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
+/// Silence or un-silence a whole lane (`muted`), or hide or show its video in
+/// the composite (`visible`). Undoable like any other edit.
+pub fn set_track_flag(editor: &mut Editor, track_id: &str, flag: TrackFlag, value: bool) -> bool {
+    editor
+        .apply(Command::SetTrackFlag {
+            track_id: track_id.to_string(),
+            flag,
+            value,
+        })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
 /// A render-ready snapshot of the active timeline.
 pub fn view(editor: &Editor) -> TimelineView {
     let timeline = editor.project().active();
@@ -553,6 +592,8 @@ pub fn view(editor: &Editor) -> TimelineView {
     TimelineView {
         track_count: timeline.tracks.len(),
         track_ids: timeline.tracks.iter().map(|t| t.id.clone()).collect(),
+        track_muted: timeline.tracks.iter().map(|t| t.muted).collect(),
+        track_visible: timeline.tracks.iter().map(|t| t.visible).collect(),
         clip_count: clips.len(),
         clips,
         duration,
