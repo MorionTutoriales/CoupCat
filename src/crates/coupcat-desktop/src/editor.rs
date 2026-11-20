@@ -519,6 +519,27 @@ pub fn apply_transition(
         .unwrap_or(false)
 }
 
+/// Add an empty lane at the end of the lane list. The engine stores the stack
+/// bottom first and draws the last lane on top of the others, so this is the
+/// lane at the bottom of the list on screen and in front in the composition.
+pub fn add_track(editor: &mut Editor) -> bool {
+    editor
+        .apply(Command::AddTrack { bottom: false })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
+/// Delete a lane. The engine removes its clips too and refuses to go below
+/// one lane, so callers only offer this for an empty lane.
+pub fn remove_track(editor: &mut Editor, track_id: &str) -> bool {
+    editor
+        .apply(Command::RemoveTrack {
+            track_id: track_id.to_string(),
+        })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
 /// Silence or un-silence a whole lane (`muted`), or hide or show its video in
 /// the composite (`visible`). Undoable like any other edit.
 pub fn set_track_flag(editor: &mut Editor, track_id: &str, flag: TrackFlag, value: bool) -> bool {
