@@ -54,6 +54,29 @@ Los crates `concat-host` y `concat-speech` del repositorio original se conservan
 referencia pero están **excluidos del build**: CoupCat hace esas tareas por su cuenta
 (recorte de fondo con `concat-vision` directamente; subtítulos con `whisper-rs`).
 
+### La interfaz (`src/crates/coupcat-desktop/src/`)
+
+La ventana se reparte por regiones, cada una en su archivo, para que varias personas puedan
+trabajar a la vez sin pisarse:
+
+| Archivo | Qué contiene |
+|---------|--------------|
+| `main.rs` | Solo arranca la ventana (icono, tamaño, ONNX Runtime) |
+| `app.rs` | El componente raíz: crea el estado, lanza las tareas en segundo plano y compone las regiones |
+| `ui/ctx.rs` | `Ctx`: el estado compartido que leen y escriben las regiones |
+| `ui/topbar.rs` | Barra superior: proyecto, reproducción, herramientas de edición, exportar, importar |
+| `ui/banners.rs` | Avisos bajo la barra: recuperación, mensajes de archivo, cambios sin guardar, errores, progreso |
+| `ui/library.rs` | Librería de medios (izquierda) |
+| `ui/stage.rs` | Reproductor: vista previa y barra de búsqueda |
+| `ui/inspector.rs` | Panel derecho: texto, fondo (IA), subtítulos, audio, transiciones y efectos del clip |
+| `ui/timeline.rs` | Línea de tiempo: regla, cabeceras de pista, pistas, clips y barra de estado |
+| `ui/files.rs` | Acciones de archivo: nuevo, abrir, guardar, recientes y recuperación |
+| `ui/style.css` | Todo el CSS |
+
+Las demás piezas (`editor.rs`, `monitor.rs`, `effects.rs`, `text.rs`, `captions.rs`,
+`cutout.rs`, `export.rs`, `project_file.rs`…) son la lógica que la interfaz usa. Una región es
+una función normal que recibe `&Ctx` y devuelve el `rsx!` de esa zona.
+
 ## Compilar en Windows
 
 Compila con la **cadena de herramientas MSVC**, desde una *Developer Shell* de Visual
