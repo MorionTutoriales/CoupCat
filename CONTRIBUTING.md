@@ -14,9 +14,11 @@ Licencia: **AGPL-3.0-or-later** (ver `LICENSE`).
 1. **Busca o crea un issue** que describa el trabajo.
 2. **Comenta el issue para tomarlo** (`/tomar`) y espera a que te lo asignen o a que
    nadie más lo esté haciendo.
-3. **Crea una rama** desde `main` en tu fork.
+3. **Sincroniza tu `main` con el del repositorio principal** (`upstream`) y **crea la
+   rama desde ahí**. Es obligatorio **cada vez que tomes un issue**.
 4. **Haz los cambios**, compila y ejecuta las pruebas.
-5. **Abre un Pull Request** que enlace el issue (`Closes #123`).
+5. **Vuelve a traer `main`** (`git merge upstream/main`) y **abre un Pull Request** que
+   enlace el issue (`Closes #123`).
 6. **Atiende la revisión**; al aprobarse, se hace *merge* a `main`.
 
 Una tarea = un issue = una rama = un PR. No trabajes sin un issue asignado.
@@ -85,13 +87,41 @@ gh repo fork MorionTutoriales/CoupCat --clone
 cd CoupCat
 ```
 
-Crea una rama descriptiva desde `main`, incluyendo el número del issue:
+### Sincroniza con `main` del repositorio principal (obligatorio con cada issue)
+
+**Cada vez que tomes un issue**, y *antes* de escribir una sola línea, trae a tu copia
+el `main` más reciente del repositorio principal. Otros PRs se mergean mientras tanto;
+si partes de un `main` viejo, tu trabajo llegará con conflictos o se construirá sobre
+código que ya cambió.
+
+En tu fork, `origin` es *tu copia* y `upstream` es el repositorio principal
+(`gh repo fork --clone` ya lo configura; compruébalo con `git remote -v` y, si falta,
+añádelo con `git remote add upstream https://github.com/MorionTutoriales/CoupCat.git`):
+
+```bash
+git switch main
+git fetch upstream
+git merge --ff-only upstream/main     # tu main queda igual que el del repositorio principal
+git push origin main                  # opcional: actualiza también tu fork en GitHub
+```
+
+Después crea la rama **desde ese `main` actualizado**, con una descripción corta y el
+número del issue:
 
 ```bash
 git switch -c feat/123-descripcion-corta    # funciones nuevas
 # o
 git switch -c fix/123-descripcion-corta     # correcciones
 ```
+
+Reglas:
+
+- **Una rama nueva por issue.** No reutilices la rama de un issue anterior.
+- Tu `main` local **no debe llevar cambios propios**: trabaja siempre en ramas. Si
+  `git merge --ff-only` falla porque tu `main` tiene commits suyos, guárdalos primero
+  (`git branch respaldo`) y luego iguálalo con `git reset --hard upstream/main`.
+- Si **retomas** una rama que ya tenías, no basta con crearla de nuevo: tráele los
+  cambios con `git merge upstream/main` (ver Paso 6) antes de seguir.
 
 ---
 
@@ -127,8 +157,17 @@ git switch -c fix/123-descripcion-corta     # correcciones
 
 ## Paso 5 — Abre el Pull Request
 
-Sube tu rama y abre el PR hacia `main`, **enlazando el issue** para que se cierre solo
-al hacer *merge*:
+**Antes de abrir el PR, vuelve a traer `main`.** Mientras trabajabas pudieron mergearse
+otros cambios; actualiza tu rama, resuelve los conflictos si los hay y **compila otra
+vez** para comprobar que todo sigue funcionando junto:
+
+```bash
+git fetch upstream
+git merge upstream/main
+```
+
+Después sube tu rama y abre el PR hacia `main`, **enlazando el issue** para que se
+cierre solo al hacer *merge*:
 
 ```bash
 git push -u origin feat/123-descripcion-corta
@@ -151,19 +190,23 @@ En la descripción del PR incluye:
 
 - Un responsable revisará tu PR y podrá pedir cambios. Responde a los comentarios y
   sube nuevos commits a la misma rama; el PR se actualiza solo.
-- Si `main` avanzó mientras trabajabas (otro PR se mergeó antes que el tuyo), **trae
-  esos cambios a tu rama**. En tu fork, `origin` es *tu copia* y `upstream` es el
-  repositorio principal (`gh repo fork --clone` ya lo configura; si no existe, añádelo con
-  `git remote add upstream https://github.com/MorionTutoriales/CoupCat.git`):
+- Si `main` avanzó mientras tu PR estaba en revisión (otro PR se mergeó antes que el
+  tuyo), **trae esos cambios a tu rama** del mismo modo que antes de abrirlo
+  (`upstream` es el repositorio principal; ver el Paso 3):
 
   ```bash
   git fetch upstream
-  git rebase upstream/main                      # o: git merge upstream/main
-  git push --force-with-lease origin feat/123-descripcion-corta
+  git merge upstream/main
+  git push origin feat/123-descripcion-corta
   ```
 
-  Si hay conflictos, resuélvelos, continúa (`git rebase --continue`) y vuelve a subir.
-  Si no puedes, avísalo en el PR y una persona responsable puede actualizarla por ti.
+  Con `merge` no hace falta forzar el *push*. Si prefieres un historial lineal puedes
+  usar `git rebase upstream/main`, pero entonces tendrás que subir con
+  `git push --force-with-lease origin feat/123-descripcion-corta`.
+
+  Si hay conflictos, resuélvelos (en un `merge`, `git add` y `git commit`; en un
+  `rebase`, `git rebase --continue`) y vuelve a subir. Si no puedes, avísalo en el PR y
+  una persona responsable puede actualizarla por ti.
 - Cuando el PR esté aprobado y la CI (si existe) en verde, se hará *merge* y el issue
   se cerrará automáticamente.
 
@@ -175,17 +218,24 @@ Si eres un agente trabajando de forma autónoma, sigue exactamente estas reglas:
 
 1. **No escribas código sin un issue asignado.** Primero toma el issue con `/tomar`
    (Paso 2) y confirma que está asignado a ti.
-2. **Un issue → una rama → un PR.** No mezcles temas no relacionados.
-3. **Antes de abrir el PR**, ejecuta al menos `cargo check -p <crate-tocado>` dentro de
-   `src/` (ver Paso 4; evita `--all` y los comandos sobre todo el workspace) y reporta
-   en el PR **exactamente qué ejecutaste y qué resultado dio**. No afirmes que algo
-   pasó si no lo ejecutaste.
-4. **No hagas push a `main`.** Trabaja siempre en tu fork/rama. Solo se permite
-   `--force-with-lease` sobre **tu propia rama del PR** al hacer *rebase* (Paso 6), nunca
-   sobre `main` ni sobre ramas ajenas.
-5. **No toques** `LICENSE`, `NOTICE` ni el historial de atribución sin indicarlo
+2. **Cada vez que tomes un issue, sincroniza primero con `main`.** Antes de escribir
+   código: `git switch main`, `git fetch upstream`, `git merge --ff-only upstream/main`,
+   y crea la rama **desde ese `main` actualizado** (Paso 3). Nunca partas de una rama o
+   de un `main` que no hayas actualizado en ese momento.
+3. **Un issue → una rama → un PR.** No mezcles temas no relacionados ni reutilices la
+   rama de un issue anterior.
+4. **Antes de abrir el PR**, trae otra vez `main` (`git fetch upstream` y
+   `git merge upstream/main`), resuelve los conflictos si los hay y ejecuta al menos
+   `cargo check -p <crate-tocado>` dentro de `src/` (ver Paso 4; evita `--all` y los
+   comandos sobre todo el workspace). Reporta en el PR **exactamente qué ejecutaste y qué
+   resultado dio**. No afirmes que algo pasó si no lo ejecutaste.
+5. **No hagas push a `main`.** Trabaja siempre en tu fork/rama. Para actualizar tu rama
+   usa `merge` (no requiere forzar). Si usas *rebase*, solo se permite
+   `--force-with-lease` sobre **tu propia rama del PR**, nunca sobre `main` ni sobre
+   ramas ajenas.
+6. **No toques** `LICENSE`, `NOTICE` ni el historial de atribución sin indicarlo
    explícitamente en el issue.
-6. Enlaza el issue con `Closes #<n>` en el PR y describe cómo verificaste el cambio.
+7. Enlaza el issue con `Closes #<n>` en el PR y describe cómo verificaste el cambio.
 
 ---
 
