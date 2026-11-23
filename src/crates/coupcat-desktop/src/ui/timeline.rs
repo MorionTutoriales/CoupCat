@@ -5,6 +5,7 @@
 use dioxus::prelude::*;
 
 use super::Ctx;
+use super::toolbar::toolbar;
 use crate::editor;
 use crate::monitor::{self, Cmd, fmt_time};
 use crate::peaks;
@@ -12,11 +13,11 @@ use crate::peaks;
 /// Pixels per second on the timeline.
 pub const PPS: f64 = 50.0;
 
-/// Timeline panel height: tall enough for the four starter lanes, the ruler and
-/// the status bar; the user can drag it between these bounds.
-pub const TL_HEIGHT_DEFAULT: f64 = 270.0;
-pub const TL_HEIGHT_MIN: f64 = 130.0;
-pub const TL_HEIGHT_MAX: f64 = 520.0;
+/// Timeline panel height: tall enough for the toolbar, the ruler, the four
+/// starter lanes and the status bar; the user can drag it between these bounds.
+pub const TL_HEIGHT_DEFAULT: f64 = 312.0;
+pub const TL_HEIGHT_MIN: f64 = 170.0;
+pub const TL_HEIGHT_MAX: f64 = 560.0;
 
 /// What a timeline drag is doing to a clip.
 #[derive(Clone, Copy, PartialEq)]
@@ -262,6 +263,7 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                   resizing.set(Some((e.page_coordinates().y, tl_height())));
               },
           }
+          {toolbar(c)}
           div { class: "tl-main",
             div { class: "tl-heads",
                 div { class: "tl-heads-spacer" }

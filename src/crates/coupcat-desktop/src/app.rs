@@ -17,7 +17,7 @@ use crate::ui::banners::banners;
 use crate::ui::files::{Files, Pending};
 use crate::ui::inspector::inspector_panel;
 use crate::ui::library::library_panel;
-use crate::ui::stage::{scrub_row, stage_panel};
+use crate::ui::stage::stage_panel;
 use crate::ui::timeline::{Drag, TL_HEIGHT_DEFAULT, TL_HEIGHT_MAX, TL_HEIGHT_MIN, timeline_panel};
 use crate::ui::topbar::topbar;
 use crate::ui::{Ctx, STYLE};
@@ -282,6 +282,9 @@ pub fn app() -> Element {
     let pending = use_signal(|| None::<Pending>);
     let busy = use_signal(|| false);
     let menu_open = use_signal(|| false);
+    // Local time of the last save or autosave, shown in the top bar.
+    let saved_at = use_signal(|| None::<String>);
+    let shortcuts_open = use_signal(|| false);
     // True when the edit differs from the saved one. Recomputed only when the
     // timeline changes (not on every playback tick).
     let dirty = use_memo({
@@ -306,13 +309,16 @@ pub fn app() -> Element {
         locked_tracks,
         track_names,
         renaming,
+        saved_at,
     };
     // Autosave: while there are unsaved changes, keep a recovery copy; when
     // everything is saved, drop it. Paused while an old copy is on offer, so
     // it is never overwritten before the person decides.
     let autosave_project = project.clone();
+    let autosave_files = files.clone();
     use_future(move || {
         let project = autosave_project.clone();
+        let files = autosave_files.clone();
         async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(30)).await;
@@ -320,7 +326,9 @@ pub fn app() -> Element {
                     continue;
                 }
                 if dirty() {
-                    let _ = project_file::write_recovery(&project.borrow());
+                    if project_file::write_recovery(&project.borrow()).is_ok() {
+                        files.stamp_saved();
+                    }
                 } else {
                     project_file::clear_recovery();
                 }
@@ -380,6 +388,8 @@ pub fn app() -> Element {
         pending,
         menu_open,
         dirty,
+        saved_at,
+        shortcuts_open,
     };
 
     rsx! {
@@ -417,7 +427,6 @@ pub fn app() -> Element {
                 {stage_panel(&c)}
                 {inspector_panel(&c)}
             }
-            {scrub_row(&c)}
             {timeline_panel(&c)}
         }
     }

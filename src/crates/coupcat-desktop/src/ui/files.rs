@@ -51,9 +51,21 @@ pub struct Files {
     pub locked_tracks: Signal<HashSet<String>>,
     pub track_names: Signal<HashMap<String, String>>,
     pub renaming: Signal<Option<String>>,
+    /// Local time of the last save or autosave (see `util::now_hms`).
+    pub saved_at: Signal<Option<String>>,
 }
 
 impl Files {
+    /// Record "now" as the time of the last save, for the top bar's indicator.
+    pub fn stamp_saved(&self) {
+        let mut saved_at = self.saved_at;
+        spawn(async move {
+            if let Some(t) = super::util::now_hms().await {
+                saved_at.set(Some(t));
+            }
+        });
+    }
+
     /// Forget the lane locks, custom names and any rename in progress.
     pub fn reset_lane_state(&self) {
         let (mut locked, mut names, mut renaming) =
@@ -67,6 +79,8 @@ impl Files {
     pub fn sync(&self) {
         // Only ever called when the project is replaced (open, new, recover).
         self.reset_lane_state();
+        let mut saved_at = self.saved_at;
+        saved_at.set(None);
         let (mut media, mut timeline, mut selected) = (self.media, self.timeline, self.selected);
         media.set(editor::media_list(&self.project.borrow()));
         timeline.set(editor::view(&self.project.borrow()));
@@ -187,6 +201,7 @@ impl Files {
                 let mut project_path = self.project_path;
                 project_path.set(Some(path.clone()));
                 self.mark_saved();
+                self.stamp_saved();
                 project_file::push_recent(&path);
                 project_file::clear_recovery();
                 self.say(true, format!("Guardado: {}", project_file::name_of(&path)));

@@ -10,6 +10,7 @@ pub mod inspector;
 pub mod library;
 pub mod stage;
 pub mod timeline;
+pub mod toolbar;
 pub mod topbar;
 pub mod util;
 
