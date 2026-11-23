@@ -524,9 +524,9 @@ pub fn apply_transition(
         .unwrap_or(false)
 }
 
-/// Add an empty lane at the end of the lane list. The engine stores the stack
-/// bottom first and draws the last lane on top of the others, so this is the
-/// lane at the bottom of the list on screen and in front in the composition.
+/// Add an empty lane in front of all the others. The engine stores the stack
+/// bottom first and draws the last lane on top, and `view` lists lanes the
+/// other way round, so the new lane shows at the top of the screen.
 pub fn add_track(editor: &mut Editor) -> bool {
     editor
         .apply(Command::AddTrack { bottom: false })
@@ -559,13 +559,18 @@ pub fn set_track_flag(editor: &mut Editor, track_id: &str, flag: TrackFlag, valu
 }
 
 /// A render-ready snapshot of the active timeline.
+///
+/// Lanes are listed as they sit on screen, like CapCut: index 0 is the lane in
+/// front (the engine's last) and the highest index is the background. Every
+/// per-lane list and each clip's `track` use that same order.
 pub fn view(editor: &Editor) -> TimelineView {
     let timeline = editor.project().active();
+    let n = timeline.tracks.len();
     let index: HashMap<&str, usize> = timeline
         .tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| (t.id.as_str(), i))
+        .map(|(i, t)| (t.id.as_str(), n - 1 - i))
         .collect();
 
     let media: HashMap<&str, &str> = editor
@@ -578,7 +583,7 @@ pub fn view(editor: &Editor) -> TimelineView {
     let mut clips = Vec::with_capacity(timeline.clips.len());
     let mut duration: f64 = 0.0;
     for clip in &timeline.clips {
-        let track = index.get(clip.track_id.as_str()).copied().unwrap_or(0);
+        let track = index.get(clip.track_id.as_str()).copied().unwrap_or(n.saturating_sub(1));
         duration = duration.max(clip.start + clip.duration);
         clips.push(ClipView {
             id: clip.id.clone(),
@@ -596,9 +601,9 @@ pub fn view(editor: &Editor) -> TimelineView {
 
     TimelineView {
         track_count: timeline.tracks.len(),
-        track_ids: timeline.tracks.iter().map(|t| t.id.clone()).collect(),
-        track_muted: timeline.tracks.iter().map(|t| t.muted).collect(),
-        track_visible: timeline.tracks.iter().map(|t| t.visible).collect(),
+        track_ids: timeline.tracks.iter().rev().map(|t| t.id.clone()).collect(),
+        track_muted: timeline.tracks.iter().rev().map(|t| t.muted).collect(),
+        track_visible: timeline.tracks.iter().rev().map(|t| t.visible).collect(),
         clip_count: clips.len(),
         clips,
         duration,
@@ -1014,6 +1019,43 @@ mod inspector_tests {
         let mut ed = Editor::new();
         let id = import(&mut ed, &info, &path)?;
         Some((ed, id, path))
+    }
+
+    #[test]
+    fn new_lane_shows_on_top_and_front() {
+        let mut ed = Editor::new();
+        let before = view(&ed);
+        let n = before.track_count;
+        let first = before.track_ids[0].clone();
+        assert!(add_track(&mut ed));
+        let v = view(&ed);
+        assert_eq!(v.track_count, n + 1);
+        // The engine's last lane is the one drawn in front; it lists first.
+        let front = ed.project().active().tracks.last().unwrap().id.clone();
+        assert_eq!(v.track_ids[0], front);
+        assert_eq!(v.track_ids[1], first);
+        assert_ne!(front, first);
+        assert_eq!(v.track_ids.last(), before.track_ids.last());
+        // Hiding the top lane flags index 0, not the background.
+        assert!(set_track_flag(&mut ed, &front, TrackFlag::Visible, false));
+        let vis = view(&ed).track_visible;
+        assert!(!vis[0] && vis[1..].iter().all(|v| *v));
+    }
+
+    #[test]
+    fn clip_lane_index_matches_screen_order() {
+        let Some((mut ed, id, _)) = with_video() else {
+            return;
+        };
+        // An imported clip lands on some lane; adding a lane in front pushes
+        // it one row down on screen, and the id lists stay aligned.
+        let b = view(&ed);
+        let t0 = b.clips.iter().find(|c| c.id == id).unwrap().track;
+        assert!(add_track(&mut ed));
+        let v = view(&ed);
+        let c = v.clips.iter().find(|c| c.id == id).unwrap();
+        assert_eq!(c.track, t0 + 1);
+        assert_eq!(v.track_ids[c.track], c.track_id);
     }
 
     #[test]
