@@ -420,7 +420,7 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                     let name = names_now
                         .get(&tid)
                         .cloned()
-                        .unwrap_or_else(|| format!("Pista {}", lane + 1));
+                        .unwrap_or_else(|| format!("Pista {}", lane_count - lane));
                     let muted = tl.track_muted.get(lane) == Some(&true);
                     let hidden = tl.track_visible.get(lane) == Some(&false);
                     let locked = lane_locked[lane];
