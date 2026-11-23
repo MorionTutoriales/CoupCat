@@ -108,6 +108,8 @@ pub fn applied(editor: &Editor, clip_id: &str) -> Vec<Applied> {
 pub struct ParamInfo {
     pub key: String,
     pub label: String,
+    /// The subhead the engine files it under ("Color", "Lightness"…); may be empty.
+    pub group: String,
     pub kind: ParamType,
     pub min: f64,
     pub max: f64,
@@ -136,6 +138,7 @@ pub fn params_of(effect_id: &str) -> Vec<ParamInfo> {
                 .map(|pr| ParamInfo {
                     key: pr.key.clone(),
                     label: pr.label.clone(),
+                    group: pr.group.clone(),
                     kind: pr.kind,
                     min: pr.min,
                     max: pr.max,
@@ -182,6 +185,8 @@ pub struct EffectCard {
 pub fn effect_cards(editor: &Editor, clip_id: &str) -> Vec<EffectCard> {
     applied(editor, clip_id)
         .into_iter()
+        // The colour panel has its own tab; it is not listed twice.
+        .filter(|a| a.id != ADJUST_ID)
         .map(|a| {
             let params = params_of(&a.id)
                 .into_iter()
@@ -248,5 +253,79 @@ pub fn remove(editor: &mut Editor, clip_id: &str, index: usize) -> bool {
         return false;
     }
     list.remove(index);
+    set(editor, clip_id.to_string(), list)
+}
+
+/// The engine's colour panel, shown in the inspector's Adjust tab.
+pub const ADJUST_ID: &str = "concat.adjust";
+
+/// The groups of the colour panel, as the engine names them, with a label.
+pub const ADJUST_GROUPS: &[(&str, &str)] = &[
+    ("Color", "Color"),
+    ("Lightness", "Luminosidad"),
+    ("Effects", "Efectos"),
+];
+
+/// Spanish names for the colour panel's knobs, by key.
+pub fn adjust_label(key: &str, fallback: &str) -> String {
+    match key {
+        "temperature" => "Temperatura",
+        "tint" => "Tinte",
+        "saturation" => "Saturación",
+        "exposure" => "Exposición",
+        "brightness" => "Brillo",
+        "contrast" => "Contraste",
+        "highlights" => "Luces",
+        "shadows" => "Sombras",
+        "whites" => "Blancos",
+        "blacks" => "Negros",
+        "sharpen" => "Nitidez",
+        "fade" => "Desvanecido",
+        "vignette" => "Viñeta",
+        _ => fallback,
+    }
+    .to_string()
+}
+
+/// The colour panel's grouped knobs with their values on a clip.
+pub fn adjust_values(editor: &Editor, clip_id: &str) -> Vec<ParamValue> {
+    let idx = current(editor, clip_id)
+        .iter()
+        .position(|f| f.id == ADJUST_ID);
+    params_of(ADJUST_ID)
+        .into_iter()
+        .filter(|p| ADJUST_GROUPS.iter().any(|(g, _)| *g == p.group))
+        .map(|info| {
+            let current = match idx {
+                Some(i) => param_value(editor, clip_id, i, &info.key, info.default),
+                None => info.default,
+            };
+            ParamValue { info, current }
+        })
+        .collect()
+}
+
+/// Set one knob of the colour panel, adding the effect to the clip if needed.
+pub fn set_adjust(editor: &mut Editor, clip_id: &str, key: &str, value: f64) -> bool {
+    let mut list = current(editor, clip_id);
+    let i = match list.iter().position(|f| f.id == ADJUST_ID) {
+        Some(i) => i,
+        None => {
+            list.push(AppliedFilter::new(ADJUST_ID));
+            list.len() - 1
+        }
+    };
+    list[i].params.insert(key.to_string(), value);
+    set(editor, clip_id.to_string(), list)
+}
+
+/// Take the colour panel off a clip.
+pub fn reset_adjust(editor: &mut Editor, clip_id: &str) -> bool {
+    let mut list = current(editor, clip_id);
+    let before = list.len();
+    list.retain(|f| f.id != ADJUST_ID);
+    if list.len() == before {
+        return false;
+    }
     set(editor, clip_id.to_string(), list)
 }

@@ -437,3 +437,37 @@
         color: inherit; font-size: 14px; opacity: .7;
     }
     .dismiss:hover { opacity: 1; }
+
+    /* Inspector: tabs and the property panels */
+    .insp-tabs { position: sticky; top: 0; z-index: 2; background: var(--bg, #14161c); }
+    .insp-tabs .res-tab { flex: 1 1 auto; min-width: 0; padding: 10px 6px; font-size: 11px; white-space: nowrap; }
+    .insp-sec { border-bottom: 1px solid #2a2d38; padding-bottom: 8px; }
+    .tf-body, .sp-body { padding: 8px 14px 4px; display: flex; flex-direction: column; gap: 8px; }
+    .fx-num {
+        width: 62px; background: #1a1c24; color: #e8e9ee; border: 1px solid #3a3f52;
+        border-radius: 6px; padding: 3px 5px; font-size: 12px; text-align: right;
+    }
+    .fx-unit { font-size: 11px; color: #9aa0b4; min-width: 14px; }
+    .tf-flips, .sp-quicks { display: flex; gap: 6px; flex-wrap: wrap; }
+    .tf-flip.on, .sp-quick.on { background: var(--accent-dim); color: #fff; border-color: var(--accent); }
+    .tf-reset, .adj-reset { align-self: flex-start; margin: 4px 14px 4px; }
+    .sp-body .sp-dur { font-size: 12px; color: #9aa0b4; }
+    .an-panel { padding: 8px 12px; }
+    .an-slots { display: flex; gap: 4px; margin-bottom: 8px; }
+    .an-slot {
+        flex: 1; padding: 6px 4px; background: #1a1c24; color: #9aa0b4; border: 1px solid #2f3340;
+        border-radius: 6px; font-size: 12px; cursor: pointer;
+    }
+    .an-slot.on { color: var(--accent); border-color: var(--accent); }
+    .an-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 8px; }
+    .an-card {
+        display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px 8px;
+        background: var(--card); border: 1px solid var(--card-border); border-radius: 8px;
+        color: #c7ccdb; font-size: 11px; cursor: pointer;
+    }
+    .an-card:hover { border-color: #4a5068; }
+    .an-card.on { border-color: var(--accent); color: var(--accent); }
+    .an-ico { font-size: 20px; line-height: 1; }
+    .adj-group .fx-head { font-size: 12px; color: #9aa0b4; border-bottom: none; padding-bottom: 2px; }
+    .adj-panel { padding: 0 0 8px; }
+    .adj-group .fx-param { padding: 0 14px; margin-bottom: 6px; }

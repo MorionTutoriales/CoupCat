@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-//! The right panel: text, cutout, captions, audio, transitions and effects of
-//! the selected clip.
+//! The right panel: the selected clip's properties, split into tabs by clip
+//! kind. The placement, speed, animation and colour tabs live in `props`.
+
+mod props;
 
 use dioxus::prelude::*;
 
 use super::Ctx;
 use super::util::color6;
-use crate::editor;
+use crate::editor::{self, InspKind};
 use crate::monitor::{self, Cmd};
 use crate::{cutout, effects, text};
 
@@ -21,6 +23,58 @@ pub const TRANSITIONS: &[(&str, &str)] = &[
     ("wipe-left", "Barrido ←"),
     ("wipe-right", "Barrido →"),
 ];
+
+/// A tab of the inspector.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InspTab {
+    Video,
+    Audio,
+    Speed,
+    Animation,
+    Adjust,
+    Text,
+}
+
+impl InspTab {
+    fn label(self) -> &'static str {
+        match self {
+            InspTab::Video => "Vídeo",
+            InspTab::Audio => "Audio",
+            InspTab::Speed => "Velocidad",
+            InspTab::Animation => "Animación",
+            InspTab::Adjust => "Ajustes",
+            InspTab::Text => "Texto",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            InspTab::Video => "insp-video",
+            InspTab::Audio => "insp-audio",
+            InspTab::Speed => "insp-speed",
+            InspTab::Animation => "insp-anim",
+            InspTab::Adjust => "insp-adjust",
+            InspTab::Text => "insp-text",
+        }
+    }
+
+    /// The tabs a clip of this kind has.
+    fn for_kind(kind: InspKind) -> &'static [InspTab] {
+        match kind {
+            InspKind::Video => &[
+                InspTab::Video,
+                InspTab::Audio,
+                InspTab::Speed,
+                InspTab::Animation,
+                InspTab::Adjust,
+            ],
+            InspKind::Image => &[InspTab::Video, InspTab::Animation, InspTab::Adjust],
+            InspKind::Audio => &[InspTab::Audio, InspTab::Speed],
+            InspKind::Text => &[InspTab::Text, InspTab::Animation],
+            InspKind::Other => &[InspTab::Video],
+        }
+    }
+}
 
 pub fn inspector_panel(c: &Ctx) -> Element {
     let project = c.project.clone();
@@ -83,6 +137,18 @@ pub fn inspector_panel(c: &Ctx) -> Element {
 
     let selected_now = selected();
 
+    // The tabs this clip has; the remembered tab stays when it still applies.
+    let kind = selected_now
+        .as_ref()
+        .and_then(|id| editor::insp_kind(&project.borrow(), id));
+    let tabs: &[InspTab] = kind.map(InspTab::for_kind).unwrap_or(&[]);
+    let mut insp_tab = c.insp_tab;
+    let tab = if tabs.contains(&insp_tab()) {
+        insp_tab()
+    } else {
+        tabs.first().copied().unwrap_or(InspTab::Video)
+    };
+
     let fx_cards = selected_now
         .as_ref()
         .map(|id| effects::effect_cards(&project.borrow(), id))
@@ -90,6 +156,7 @@ pub fn inspector_panel(c: &Ctx) -> Element {
 
     let text_style = selected_now
         .as_ref()
+        .filter(|_| tab == InspTab::Text)
         .and_then(|id| text::get_style(&project.borrow(), id));
 
     let cur_transition = selected_now
@@ -108,18 +175,24 @@ pub fn inspector_panel(c: &Ctx) -> Element {
         .map(|id| editor::has_incoming_cut(&project.borrow(), id))
         .unwrap_or(false);
 
-    let selected_has_media = selected_now
-        .as_ref()
-        .and_then(|id| editor::media_path(&project.borrow(), id))
-        .is_some();
+    let selected_has_media = tab == InspTab::Video
+        && selected_now
+            .as_ref()
+            .and_then(|id| editor::media_path(&project.borrow(), id))
+            .is_some();
 
     let selected_cutout = selected_now
         .as_ref()
         .map(|id| editor::has_cutout(&project.borrow(), id))
         .unwrap_or(false);
 
+    let has_sound = selected_now
+        .as_ref()
+        .and_then(|id| editor::audio_info(&project.borrow(), id))
+        .is_some();
     let audio = selected_now
         .as_ref()
+        .filter(|_| tab == InspTab::Audio)
         .and_then(|id| editor::audio_info(&project.borrow(), id));
 
     let selected_name = selected_now.as_ref().and_then(|id| {
@@ -131,6 +204,33 @@ pub fn inspector_panel(c: &Ctx) -> Element {
 
     rsx! {
         aside { class: "fx",
+            if !tabs.is_empty() {
+                div { class: "res-tabs-wrap insp-tabs",
+                    div { class: "res-tabs",
+                        for t in tabs.iter() {
+                            button {
+                                key: "{t.id()}",
+                                id: "{t.id()}",
+                                class: if *t == tab { "res-tab on" } else { "res-tab" },
+                                onclick: { let t = *t; move |_| insp_tab.set(t) },
+                                "{t.label()}"
+                            }
+                        }
+                    }
+                }
+            }
+            if let (Some(id), InspTab::Video) = (selected_now.as_ref(), tab) {
+                {props::transform_section(c, id)}
+            }
+            if let (Some(id), InspTab::Speed) = (selected_now.as_ref(), tab) {
+                {props::speed_tab(c, id, has_sound)}
+            }
+            if let (Some(id), InspTab::Animation) = (selected_now.as_ref(), tab) {
+                {props::animation_tab(c, id)}
+            }
+            if let (Some(id), InspTab::Adjust) = (selected_now.as_ref(), tab) {
+                {props::adjust_tab(c, id)}
+            }
             if let Some(st) = text_style.as_ref() {
                 div { class: "txt-panel",
                     div { class: "fx-head", "Texto" }
@@ -340,7 +440,7 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                     }
                 }
             }
-            if selected_now.is_some() {
+            if selected_now.is_some() && tab == InspTab::Video {
                 div { class: "tr-panel",
                     div { class: "fx-head", "Transición de entrada" }
                     div { class: "tr-body",
@@ -417,13 +517,16 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                     }
                 }
             }
-            div { class: "fx-head", "Efectos" }
+            if tab == InspTab::Video || selected_now.is_none() {
+                div { class: "fx-head", "Efectos" }
+            }
             match selected_now.as_ref() {
                 None => rsx! {
                     div { class: "fx-empty",
-                        "Selecciona un clip en la línea de tiempo para ver y editar sus efectos, su audio y su fondo."
+                        "Selecciona un clip en la línea de tiempo para ver y editar sus propiedades, su audio y su fondo."
                     }
                 },
+                Some(_) if tab != InspTab::Video => rsx! {},
                 Some(_) => rsx! {
                     div { class: "fx-sel", "Clip: {selected_name.clone().unwrap_or_default()}" }
                     div { class: "fx-applied",

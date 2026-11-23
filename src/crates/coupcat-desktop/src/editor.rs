@@ -163,7 +163,12 @@ pub fn import_media(editor: &mut Editor, info: &MediaInfo, path: &Path) -> Optio
 
 /// Drop a clip of a bin item onto a specific track at `start` seconds (the
 /// engine finds the nearest free gap on that lane).
-pub fn add_clip_on(editor: &mut Editor, media_id: &str, track_id: &str, start: f64) -> Option<String> {
+pub fn add_clip_on(
+    editor: &mut Editor,
+    media_id: &str,
+    track_id: &str,
+    start: f64,
+) -> Option<String> {
     editor
         .apply(Command::AddClip {
             media_id: media_id.to_string(),
@@ -437,9 +442,7 @@ fn cut_neighbours(editor: &Editor, clip_id: &str) -> Option<(String, f64, f64)> 
     let timeline = editor.project().active();
     let b = timeline.clip(clip_id)?;
     let a = timeline.clips.iter().find(|o| {
-        o.id != b.id
-            && o.track_id == b.track_id
-            && (o.start + o.duration - b.start).abs() < 0.03
+        o.id != b.id && o.track_id == b.track_id && (o.start + o.duration - b.start).abs() < 0.03
     })?;
     Some((a.id.clone(), a.duration, b.duration))
 }
@@ -464,7 +467,9 @@ pub fn apply_transition(
 
     // Handle currently carved out (we always carve duration/2 per side), and
     // the target for the requested duration.
-    let h_cur = get_transition(editor, clip_b).map(|(_, d)| d / 2.0).unwrap_or(0.0);
+    let h_cur = get_transition(editor, clip_b)
+        .map(|(_, d)| d / 2.0)
+        .unwrap_or(0.0);
     let mut h_target = match kind {
         Some(_) => (duration / 2.0).max(0.05),
         None => 0.0,
@@ -599,5 +604,512 @@ pub fn view(editor: &Editor) -> TimelineView {
         duration,
         can_undo: editor.can_undo(),
         can_redo: editor.can_redo(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Inspector: placement, speed and animation of a clip
+// ---------------------------------------------------------------------------
+
+/// The kind of a clip as the inspector groups them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InspKind {
+    Video,
+    Image,
+    Audio,
+    Text,
+    Other,
+}
+
+/// What kind of clip `clip_id` is, for choosing the inspector's tabs.
+pub fn insp_kind(editor: &Editor, clip_id: &str) -> Option<InspKind> {
+    editor
+        .project()
+        .active()
+        .clip(clip_id)
+        .map(|c| match c.kind {
+            ClipKind::Video => InspKind::Video,
+            ClipKind::Image => InspKind::Image,
+            ClipKind::Audio => InspKind::Audio,
+            ClipKind::Text => InspKind::Text,
+            _ => InspKind::Other,
+        })
+}
+
+/// A clip's picture placement and playback rate, as the inspector edits them.
+#[derive(Clone, PartialEq)]
+pub struct Props {
+    pub scale: f64,
+    pub offset_x: f64,
+    pub offset_y: f64,
+    pub rotation: f64,
+    pub opacity: f64,
+    pub flip_h: bool,
+    pub flip_v: bool,
+    pub blend: String,
+    pub speed: f64,
+    pub preserve_pitch: bool,
+    pub duration: f64,
+}
+
+pub fn props(editor: &Editor, clip_id: &str) -> Option<Props> {
+    editor.project().active().clip(clip_id).map(|c| Props {
+        scale: c.scale,
+        offset_x: c.offset_x,
+        offset_y: c.offset_y,
+        rotation: c.rotation,
+        opacity: c.opacity,
+        flip_h: c.flip_h,
+        flip_v: c.flip_v,
+        blend: c.blend.clone(),
+        speed: c.speed,
+        preserve_pitch: c.preserve_pitch,
+        duration: c.duration,
+    })
+}
+
+/// Change any of scale / offsets / rotation (each optional).
+pub fn set_transform(
+    editor: &mut Editor,
+    clip_id: &str,
+    scale: Option<f64>,
+    offset_x: Option<f64>,
+    offset_y: Option<f64>,
+    rotation: Option<f64>,
+) -> bool {
+    editor
+        .apply(Command::SetClipTransform {
+            clip_id: clip_id.to_string(),
+            scale,
+            offset_x,
+            offset_y,
+            rotation,
+            stretch_x: None,
+            stretch_y: None,
+        })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
+/// Back to centred, unrotated, full size, opaque, unflipped, normal blend.
+pub fn reset_transform(editor: &mut Editor, clip_id: &str) -> bool {
+    let id = clip_id.to_string();
+    let cmds = vec![
+        Command::SetClipTransform {
+            clip_id: id.clone(),
+            scale: Some(1.0),
+            offset_x: Some(0.0),
+            offset_y: Some(0.0),
+            rotation: Some(0.0),
+            stretch_x: None,
+            stretch_y: None,
+        },
+        Command::UpdateClip {
+            clip_id: id,
+            patch: ClipPatch {
+                opacity: Some(1.0),
+                flip_h: Some(false),
+                flip_v: Some(false),
+                blend: Some(String::new()),
+                ..ClipPatch::default()
+            },
+        },
+    ];
+    batch(editor, cmds)
+}
+
+pub fn set_opacity(editor: &mut Editor, clip_id: &str, v: f64) -> bool {
+    patch_clip(
+        editor,
+        clip_id.to_string(),
+        ClipPatch {
+            opacity: Some(v.clamp(0.0, 1.0)),
+            ..ClipPatch::default()
+        },
+    )
+}
+
+pub fn set_flip(editor: &mut Editor, clip_id: &str, horizontal: bool, on: bool) -> bool {
+    let mut patch = ClipPatch::default();
+    if horizontal {
+        patch.flip_h = Some(on);
+    } else {
+        patch.flip_v = Some(on);
+    }
+    patch_clip(editor, clip_id.to_string(), patch)
+}
+
+pub fn set_blend(editor: &mut Editor, clip_id: &str, blend: &str) -> bool {
+    patch_clip(
+        editor,
+        clip_id.to_string(),
+        ClipPatch {
+            blend: Some(if blend == "normal" {
+                String::new()
+            } else {
+                blend.to_string()
+            }),
+            ..ClipPatch::default()
+        },
+    )
+}
+
+/// Set the playback rate; the clip's duration follows (source held constant).
+pub fn set_speed(editor: &mut Editor, clip_id: &str, speed: f64) -> bool {
+    editor
+        .apply(Command::SetClipSpeed {
+            clip_id: clip_id.to_string(),
+            speed,
+            ripple: false,
+        })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
+pub fn set_preserve_pitch(editor: &mut Editor, clip_id: &str, on: bool) -> bool {
+    patch_clip(
+        editor,
+        clip_id.to_string(),
+        ClipPatch {
+            preserve_pitch: Some(on),
+            ..ClipPatch::default()
+        },
+    )
+}
+
+/// Where an animation sits in the clip.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AnimSlot {
+    In,
+    Out,
+    Loop,
+}
+
+/// Ready-made animations: `(id, label)`.
+pub const ANIM_IN: &[(&str, &str)] = &[
+    ("fade", "Fundido"),
+    ("zoom-in", "Acercar"),
+    ("zoom-out", "Alejar"),
+    ("slide-left", "Desde la izquierda"),
+    ("slide-right", "Desde la derecha"),
+    ("slide-up", "Desde arriba"),
+    ("slide-down", "Desde abajo"),
+    ("spin", "Giro"),
+];
+pub const ANIM_LOOP: &[(&str, &str)] = &[
+    ("pulse", "Latido"),
+    ("sway", "Balanceo"),
+    ("slow-zoom-in", "Zoom lento +"),
+    ("slow-zoom-out", "Zoom lento -"),
+    ("blink", "Parpadeo"),
+];
+
+pub fn anim_list(slot: AnimSlot) -> &'static [(&'static str, &'static str)] {
+    match slot {
+        AnimSlot::In | AnimSlot::Out => ANIM_IN,
+        AnimSlot::Loop => ANIM_LOOP,
+    }
+}
+
+use concat_project::model::{KeyEase, KeyProperty};
+
+/// The keys a preset puts on a clip, `(property, at, value)`, given the clip's
+/// own values. The ramp of an in/out animation lasts about half a second.
+fn anim_keys(slot: AnimSlot, id: &str, p: &Props) -> Vec<(KeyProperty, f64, f64)> {
+    let mut k = Vec::new();
+    if slot == AnimSlot::Loop {
+        match id {
+            "pulse" => {
+                for (at, f) in [(0.0, 1.0), (0.5, 1.12), (1.0, 1.0)] {
+                    k.push((KeyProperty::Scale, at, p.scale * f));
+                }
+            }
+            "sway" => {
+                for (at, d) in [(0.0, -5.0), (0.5, 5.0), (1.0, -5.0)] {
+                    k.push((KeyProperty::Rotation, at, p.rotation + d));
+                }
+            }
+            "slow-zoom-in" => {
+                k.push((KeyProperty::Scale, 0.0, p.scale));
+                k.push((KeyProperty::Scale, 1.0, p.scale * 1.2));
+            }
+            "slow-zoom-out" => {
+                k.push((KeyProperty::Scale, 0.0, p.scale * 1.2));
+                k.push((KeyProperty::Scale, 1.0, p.scale));
+            }
+            "blink" => {
+                for (at, f) in [
+                    (0.0, 1.0),
+                    (0.25, 0.35),
+                    (0.5, 1.0),
+                    (0.75, 0.35),
+                    (1.0, 1.0),
+                ] {
+                    k.push((KeyProperty::Opacity, at, p.opacity * f));
+                }
+            }
+            _ => {}
+        }
+        return k;
+    }
+    let e = (0.5 / p.duration.max(0.2)).min(0.4);
+    // The ramp runs between the resting value and the "away" value.
+    let (rest_at, away_at) = match slot {
+        AnimSlot::In => (e, 0.0),
+        _ => (1.0 - e, 1.0),
+    };
+    let mut away = |prop: KeyProperty, rest: f64, gone: f64| {
+        k.push((prop, rest_at, rest));
+        k.push((prop, away_at, gone));
+    };
+    match id {
+        "fade" => away(KeyProperty::Opacity, p.opacity, 0.0),
+        "zoom-in" => {
+            away(KeyProperty::Scale, p.scale, p.scale * 0.5);
+            away(KeyProperty::Opacity, p.opacity, 0.0);
+        }
+        "zoom-out" => {
+            away(KeyProperty::Scale, p.scale, p.scale * 1.6);
+            away(KeyProperty::Opacity, p.opacity, 0.0);
+        }
+        "slide-left" => away(KeyProperty::OffsetX, p.offset_x, p.offset_x - 0.6),
+        "slide-right" => away(KeyProperty::OffsetX, p.offset_x, p.offset_x + 0.6),
+        "slide-up" => away(KeyProperty::OffsetY, p.offset_y, p.offset_y - 0.6),
+        "slide-down" => away(KeyProperty::OffsetY, p.offset_y, p.offset_y + 0.6),
+        "spin" => {
+            away(KeyProperty::Rotation, p.rotation, p.rotation - 90.0);
+            away(KeyProperty::Opacity, p.opacity, 0.0);
+        }
+        _ => {}
+    }
+    k
+}
+
+fn slot_has(slot: AnimSlot, at: f64) -> bool {
+    match slot {
+        AnimSlot::In => at <= 0.45,
+        AnimSlot::Out => at >= 0.55,
+        AnimSlot::Loop => true,
+    }
+}
+
+fn animatable(p: KeyProperty) -> bool {
+    matches!(
+        p,
+        KeyProperty::Scale
+            | KeyProperty::OffsetX
+            | KeyProperty::OffsetY
+            | KeyProperty::Rotation
+            | KeyProperty::Opacity
+    )
+}
+
+fn key_order(a: &(KeyProperty, f64, f64), b: &(KeyProperty, f64, f64)) -> std::cmp::Ordering {
+    (a.0 as u8, a.1)
+        .partial_cmp(&(b.0 as u8, b.1))
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
+/// Which preset of `slot` is on the clip, if the keys match one.
+pub fn current_anim(editor: &Editor, clip_id: &str, slot: AnimSlot) -> Option<&'static str> {
+    let clip = editor.project().active().clip(clip_id)?;
+    let props = props(editor, clip_id)?;
+    let mut have: Vec<(KeyProperty, f64, f64)> = clip
+        .keys
+        .iter()
+        .filter(|k| animatable(k.property) && slot_has(slot, k.at))
+        .map(|k| (k.property, k.at, k.value))
+        .collect();
+    if have.is_empty() {
+        return None;
+    }
+    have.sort_by(key_order);
+    for (id, _) in anim_list(slot) {
+        let mut want = anim_keys(slot, id, &props);
+        want.sort_by(key_order);
+        if want.len() == have.len()
+            && want
+                .iter()
+                .zip(&have)
+                .all(|(a, b)| a.0 == b.0 && (a.1 - b.1).abs() < 0.01 && (a.2 - b.2).abs() < 0.01)
+        {
+            return Some(id);
+        }
+    }
+    None
+}
+
+fn batch(editor: &mut Editor, commands: Vec<Command>) -> bool {
+    if commands.is_empty() {
+        return false;
+    }
+    editor
+        .apply(Command::Batch { commands })
+        .map(|o| o.applied)
+        .unwrap_or(false)
+}
+
+/// The commands that take an animation slot's keys off the clip.
+fn clear_cmds(editor: &Editor, clip_id: &str, slot: AnimSlot) -> Vec<Command> {
+    let Some(clip) = editor.project().active().clip(clip_id) else {
+        return Vec::new();
+    };
+    clip.keys
+        .iter()
+        .filter(|k| animatable(k.property) && slot_has(slot, k.at))
+        .map(|k| Command::ClearClipKey {
+            clip_id: clip_id.to_string(),
+            property: k.property,
+            at: k.at,
+        })
+        .collect()
+}
+
+/// Take an animation slot's keys off the clip (one undo step).
+pub fn clear_anim(editor: &mut Editor, clip_id: &str, slot: AnimSlot) -> bool {
+    let cmds = clear_cmds(editor, clip_id, slot);
+    batch(editor, cmds)
+}
+
+/// Put preset `id` on the clip's `slot`, replacing what was there, in one undo
+/// step. A looping animation replaces every animation; an entry or exit keeps
+/// the others.
+pub fn set_anim(editor: &mut Editor, clip_id: &str, slot: AnimSlot, id: &str) -> bool {
+    let Some(p) = props(editor, clip_id) else {
+        return false;
+    };
+    let mut cmds = Vec::new();
+    if slot == AnimSlot::Loop {
+        cmds.extend(clear_cmds(editor, clip_id, AnimSlot::In));
+        cmds.extend(clear_cmds(editor, clip_id, AnimSlot::Out));
+    } else {
+        cmds.extend(clear_cmds(editor, clip_id, slot));
+    }
+    for (property, at, value) in anim_keys(slot, id, &p) {
+        cmds.push(Command::SetClipKey {
+            clip_id: clip_id.to_string(),
+            property,
+            at,
+            value,
+            ease: KeyEase::IN_OUT,
+        });
+    }
+    batch(editor, cmds)
+}
+
+#[cfg(test)]
+mod inspector_tests {
+    use super::*;
+
+    /// A project holding one video clip of the first video found in the user's
+    /// Videos folder, or `None` when there is none to probe.
+    fn with_video() -> Option<(Editor, String, std::path::PathBuf)> {
+        let dir = std::path::PathBuf::from(std::env::var("USERPROFILE").ok()?).join("Videos");
+        let path = std::fs::read_dir(dir)
+            .ok()?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == "mp4"))?;
+        let info = concat_media::probe(&path).ok()?;
+        let mut ed = Editor::new();
+        let id = import(&mut ed, &info, &path)?;
+        Some((ed, id, path))
+    }
+
+    #[test]
+    fn speed_changes_duration_and_undoes() {
+        let Some((mut ed, id, _)) = with_video() else {
+            return;
+        };
+        let before = props(&ed, &id).unwrap();
+        assert!(set_speed(&mut ed, &id, 2.0));
+        let after = props(&ed, &id).unwrap();
+        assert!((after.duration - before.duration / 2.0).abs() < 0.05);
+        ed.undo();
+        assert!((props(&ed, &id).unwrap().duration - before.duration).abs() < 1e-6);
+    }
+
+    #[test]
+    fn animations_are_one_undo_step_and_detected() {
+        let Some((mut ed, id, _)) = with_video() else {
+            return;
+        };
+        assert_eq!(current_anim(&ed, &id, AnimSlot::In), None);
+        assert!(set_anim(&mut ed, &id, AnimSlot::In, "zoom-in"));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::In), Some("zoom-in"));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::Out), None);
+        assert!(set_anim(&mut ed, &id, AnimSlot::Out, "fade"));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::In), Some("zoom-in"));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::Out), Some("fade"));
+        // Replacing the entry leaves the exit alone.
+        assert!(set_anim(&mut ed, &id, AnimSlot::In, "spin"));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::In), Some("spin"));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::Out), Some("fade"));
+        assert!(clear_anim(&mut ed, &id, AnimSlot::In));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::In), None);
+        assert_eq!(current_anim(&ed, &id, AnimSlot::Out), Some("fade"));
+        // One undo takes back the whole clear.
+        ed.undo();
+        assert_eq!(current_anim(&ed, &id, AnimSlot::In), Some("spin"));
+        // A combined animation replaces entry and exit.
+        assert!(set_anim(&mut ed, &id, AnimSlot::Loop, "pulse"));
+        assert_eq!(current_anim(&ed, &id, AnimSlot::Loop), Some("pulse"));
+    }
+
+    #[test]
+    fn transform_and_reset() {
+        let Some((mut ed, id, _)) = with_video() else {
+            return;
+        };
+        assert!(set_transform(
+            &mut ed,
+            &id,
+            Some(1.5),
+            Some(0.2),
+            None,
+            Some(30.0)
+        ));
+        let p = props(&ed, &id).unwrap();
+        assert_eq!((p.scale, p.offset_x, p.rotation), (1.5, 0.2, 30.0));
+        assert!(set_opacity(&mut ed, &id, 0.4));
+        assert!(set_flip(&mut ed, &id, true, true));
+        assert!(set_blend(&mut ed, &id, "multiply"));
+        assert!(reset_transform(&mut ed, &id));
+        let p = props(&ed, &id).unwrap();
+        assert_eq!(
+            (p.scale, p.offset_x, p.rotation, p.opacity),
+            (1.0, 0.0, 0.0, 1.0)
+        );
+        assert!(!p.flip_h && p.blend.is_empty());
+    }
+
+    #[test]
+    fn adjust_is_one_effect_and_hidden_from_the_list() {
+        let Some((mut ed, id, _)) = with_video() else {
+            return;
+        };
+        assert!(crate::effects::set_adjust(&mut ed, &id, "contrast", 30.0));
+        assert!(crate::effects::set_adjust(&mut ed, &id, "saturation", 20.0));
+        assert_eq!(crate::effects::applied(&ed, &id).len(), 1);
+        assert!(crate::effects::effect_cards(&ed, &id).is_empty());
+        let v = crate::effects::adjust_values(&ed, &id);
+        assert!(
+            v.iter()
+                .any(|p| p.info.key == "contrast" && p.current == 30.0)
+        );
+        assert_eq!(v.len(), 13);
+        assert!(crate::effects::reset_adjust(&mut ed, &id));
+        assert!(crate::effects::applied(&ed, &id).is_empty());
+    }
+
+    /// Writes a project (a video and a title) for the UI tests to open:
+    /// `COUPCAT_FIXTURE=<path> cargo test -p coupcat-desktop write_fixture -- --ignored`.
+    #[test]
+    #[ignore]
+    fn write_fixture() {
+        let out = std::env::var("COUPCAT_FIXTURE").expect("COUPCAT_FIXTURE");
+        let (mut ed, _, _) = with_video().expect("a video in Videos");
+        crate::text::add_text(&mut ed, 0.0).unwrap();
+        crate::project_file::save(&ed, std::path::Path::new(&out)).unwrap();
     }
 }
