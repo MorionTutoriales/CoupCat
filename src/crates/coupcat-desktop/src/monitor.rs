@@ -53,6 +53,8 @@ pub enum Cmd {
     Play,
     /// Stop.
     Pause,
+    /// Start over from the beginning when playback reaches the end.
+    SetLoop(bool),
     /// There is nothing to show any more (a new or empty project): drop the
     /// timeline and the picture, so the monitor does not keep the last frame.
     Clear,
@@ -124,6 +126,7 @@ fn run(rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>) {
     let mut data: Option<TimelineData> = None;
     let mut time = 0.0_f64;
     let mut playing = false;
+    let mut looping = false;
 
     loop {
         let cmd = if playing {
@@ -165,6 +168,7 @@ fn run(rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>) {
                         start_audio(&mut audio, d, time);
                     }
                 }
+                Cmd::SetLoop(on) => looping = on,
                 Cmd::Pause => {
                     playing = false;
                     stop_audio(&mut audio);
@@ -194,7 +198,10 @@ fn run(rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>) {
                 let fps = d.rate_num as f64 / d.rate_den.max(1) as f64;
                 let step = 1.0 / fps.max(1.0);
                 time += step;
-                if time >= d.duration {
+                if time >= d.duration && looping && d.duration > 0.0 {
+                    time = 0.0;
+                    start_audio(&mut audio, d, time);
+                } else if time >= d.duration {
                     time = d.duration;
                     playing = false;
                     stop_audio(&mut audio);
@@ -268,7 +275,10 @@ fn render(
     match concat_export::preview_frame(pool, &request) {
         Ok(rgba) => match Frame::from_rgba(width, height, rgba) {
             Some(frame) => publish(shared, &frame, time, d.duration, playing),
-            None => set_error(shared, "El frame compuesto tiene un tamaño inesperado.".to_string()),
+            None => set_error(
+                shared,
+                "El frame compuesto tiene un tamaño inesperado.".to_string(),
+            ),
         },
         Err(e) => set_error(shared, format!("Al componer el frame: {e}")),
     }

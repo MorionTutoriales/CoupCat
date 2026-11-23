@@ -6,7 +6,8 @@
 use dioxus::prelude::*;
 
 use super::Ctx;
-use crate::monitor::{Cmd, fmt_time};
+use crate::editor;
+use crate::monitor::{self, Cmd, fmt_time};
 
 pub fn stage_panel(c: &Ctx) -> Element {
     let monitor = c.monitor.clone();
@@ -15,7 +16,10 @@ pub fn stage_panel(c: &Ctx) -> Element {
     let pos = c.pos;
     let dur = c.dur;
     let playing = c.playing;
-    let timeline = c.timeline;
+    let mut timeline = c.timeline;
+    let mut looping = c.looping;
+    let mut stage_full = c.stage_full;
+    let project = c.project.clone();
 
     let on_playpause = {
         let monitor = monitor.clone();
@@ -37,13 +41,58 @@ pub fn stage_panel(c: &Ctx) -> Element {
         }
     };
 
+    let on_ratio = {
+        let project = project.clone();
+        let monitor = monitor.clone();
+        move |e: FormEvent| {
+            editor::set_ratio(&mut project.borrow_mut(), &e.value());
+            timeline.set(editor::view(&project.borrow()));
+            if let Some(d) = monitor::timeline_data(&project.borrow()) {
+                monitor.send(Cmd::SetTimeline(d));
+            }
+        }
+    };
+
+    let on_loop = {
+        let monitor = monitor.clone();
+        move |_| {
+            looping.set(!looping());
+            monitor.send(Cmd::SetLoop(looping()));
+        }
+    };
+
+    // Full screen: the window takes the whole display and the player fills it.
+    let on_full = move |_| {
+        let on = !stage_full();
+        stage_full.set(on);
+        dioxus::desktop::window().set_fullscreen(on);
+    };
+
+    let (cw, ch) = editor::video_size(&project.borrow());
+    let ratio = editor::ratio_id(cw, ch);
+
     let tl = timeline();
     let has_clip = tl.clip_count > 0;
     let tl_seconds = tl.duration.max(dur()).max(10.0);
 
     rsx! {
-        main { class: "stage",
-            div { class: "card-head", "Reproductor" }
+        main { class: if stage_full() { "stage full" } else { "stage" },
+            div { class: "card-head stage-head",
+                span { "Reproductor" }
+                select {
+                    id: "ratio-select",
+                    class: "fx-select ratio-select",
+                    title: "Proporción del lienzo del proyecto",
+                    value: "{ratio}",
+                    onchange: on_ratio,
+                    for (id, label, _, _) in editor::RATIOS.iter() {
+                        option { key: "{id}", value: "{id}", "{label}" }
+                    }
+                    if ratio == "custom" {
+                        option { value: "custom", "{cw}×{ch}" }
+                    }
+                }
+            }
             div { class: "stage-view",
                 match frame() {
                     Some(src) => rsx! { img { class: "frame", src: "{src}" } },
@@ -68,7 +117,22 @@ pub fn stage_panel(c: &Ctx) -> Element {
                     title: "Reproducir / pausar (barra espaciadora)",
                     if playing() { "⏸" } else { "▶" }
                 }
-                span { class: "stage-ctrl-end" }
+                span { class: "stage-ctrl-end",
+                    button {
+                        id: "btn-loop",
+                        class: if looping() { "ctrl sm on" } else { "ctrl sm" },
+                        title: "Repetir en bucle",
+                        onclick: on_loop,
+                        "🔁"
+                    }
+                    button {
+                        id: "btn-fullscreen",
+                        class: "ctrl sm",
+                        title: if stage_full() { "Salir de pantalla completa (Esc)" } else { "Pantalla completa" },
+                        onclick: on_full,
+                        if stage_full() { "🗗" } else { "⛶" }
+                    }
+                }
             }
             div { class: "scrub-row",
                 input {

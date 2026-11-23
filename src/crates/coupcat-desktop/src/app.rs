@@ -66,6 +66,19 @@ pub fn app() -> Element {
     let res_tab = use_signal(|| ResTab::Media);
     let mut pps = use_signal(|| crate::ui::timeline::PPS_DEFAULT);
     let snap = use_signal(|| true);
+    let looping = use_signal(|| false);
+    let stage_full = use_signal(|| false);
+    // Esc leaves the full-screen player (the button does the work).
+    use_future(|| async move {
+        let _ = dioxus::document::eval(
+            r#"document.addEventListener('keydown', function(e){
+                if (e.key === 'Escape' && document.querySelector('main.stage.full')) {
+                    var b = document.getElementById('btn-fullscreen');
+                    if (b) b.click();
+                }
+            });"#,
+        );
+    });
     // Ctrl + wheel over the timeline zooms it around the cursor. Done in script
     // so the page's own zoom can be refused; the scale lives here.
     use_future(move || async move {
@@ -436,6 +449,8 @@ pub fn app() -> Element {
         insp_tab,
         pps,
         snap,
+        looping,
+        stage_full,
         anim_slot,
         res_cat,
         res_search,

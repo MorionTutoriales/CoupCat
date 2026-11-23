@@ -70,6 +70,9 @@ pub struct Ctx {
     /// Timeline zoom in pixels per second, and whether edges snap while dragging.
     pub pps: Signal<f64>,
     pub snap: Signal<bool>,
+    /// The player: loop playback, and the full-screen view.
+    pub looping: Signal<bool>,
+    pub stage_full: Signal<bool>,
     pub anim_slot: Signal<editor::AnimSlot>,
     pub res_cat: Signal<usize>,
     pub res_search: Signal<String>,
