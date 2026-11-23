@@ -32,6 +32,7 @@ pub enum InspTab {
     Speed,
     Animation,
     Adjust,
+    Effects,
     Text,
 }
 
@@ -43,6 +44,7 @@ impl InspTab {
             InspTab::Speed => "Velocidad",
             InspTab::Animation => "Animación",
             InspTab::Adjust => "Ajustes",
+            InspTab::Effects => "Efectos",
             InspTab::Text => "Texto",
         }
     }
@@ -54,6 +56,7 @@ impl InspTab {
             InspTab::Speed => "insp-speed",
             InspTab::Animation => "insp-anim",
             InspTab::Adjust => "insp-adjust",
+            InspTab::Effects => "insp-effects",
             InspTab::Text => "insp-text",
         }
     }
@@ -63,15 +66,21 @@ impl InspTab {
         match kind {
             InspKind::Video => &[
                 InspTab::Video,
+                InspTab::Effects,
                 InspTab::Audio,
                 InspTab::Speed,
                 InspTab::Animation,
                 InspTab::Adjust,
             ],
-            InspKind::Image => &[InspTab::Video, InspTab::Animation, InspTab::Adjust],
+            InspKind::Image => &[
+                InspTab::Video,
+                InspTab::Effects,
+                InspTab::Animation,
+                InspTab::Adjust,
+            ],
             InspKind::Audio => &[InspTab::Audio, InspTab::Speed],
             InspKind::Text => &[InspTab::Text, InspTab::Animation],
-            InspKind::Other => &[InspTab::Video],
+            InspKind::Other => &[InspTab::Video, InspTab::Effects],
         }
     }
 }
@@ -517,7 +526,7 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                     }
                 }
             }
-            if tab == InspTab::Video || selected_now.is_none() {
+            if tab == InspTab::Effects || selected_now.is_none() {
                 div { class: "fx-head", "Efectos" }
             }
             match selected_now.as_ref() {
@@ -526,19 +535,66 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                         "Selecciona un clip en la línea de tiempo para ver y editar sus propiedades, su audio y su fondo."
                     }
                 },
-                Some(_) if tab != InspTab::Video => rsx! {},
+                Some(_) if tab != InspTab::Effects => rsx! {},
                 Some(_) => rsx! {
                     div { class: "fx-sel", "Clip: {selected_name.clone().unwrap_or_default()}" }
                     div { class: "fx-applied",
                         if fx_cards.is_empty() {
-                            div { class: "fx-none", "Sin efectos aún" }
+                            div { class: "fx-none",
+                                "Sin efectos. Arrastra uno desde la pestaña Efectos de la izquierda sobre el clip o el reproductor."
+                            }
                         } else {
                             for card in fx_cards.iter() {
-                                div { class: "fx-card", key: "{card.index}",
+                                div {
+                                    class: if card.enabled { "fx-card" } else { "fx-card off" },
+                                    key: "{card.index}",
                                     div { class: "fx-card-head",
                                         span { class: "fx-card-name", "{card.name}" }
+                                        div { class: "fx-card-btns",
+                                        button {
+                                            class: if card.enabled { "fx-mini on" } else { "fx-mini" },
+                                            title: if card.enabled { "Desactivar este efecto (se conservan sus ajustes)" } else { "Activar este efecto" },
+                                            onclick: {
+                                                let project = project.clone();
+                                                let monitor = monitor.clone();
+                                                let sel = selected_now.clone();
+                                                let idx = card.index;
+                                                let on = card.enabled;
+                                                move |_| {
+                                                    if let Some(cid) = &sel {
+                                                        effects::set_enabled(&mut project.borrow_mut(), cid, idx, !on);
+                                                        timeline.set(editor::view(&project.borrow()));
+                                                        if let Some(d) = monitor::timeline_data(&project.borrow()) {
+                                                            monitor.send(Cmd::SetTimeline(d));
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            if card.enabled { "●" } else { "○" }
+                                        }
+                                        button {
+                                            class: "fx-mini",
+                                            title: "Restablecer los ajustes de este efecto",
+                                            onclick: {
+                                                let project = project.clone();
+                                                let monitor = monitor.clone();
+                                                let sel = selected_now.clone();
+                                                let idx = card.index;
+                                                move |_| {
+                                                    if let Some(cid) = &sel {
+                                                        effects::reset_params(&mut project.borrow_mut(), cid, idx);
+                                                        timeline.set(editor::view(&project.borrow()));
+                                                        if let Some(d) = monitor::timeline_data(&project.borrow()) {
+                                                            monitor.send(Cmd::SetTimeline(d));
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "↺"
+                                        }
                                         button {
                                             class: "fx-chip-x",
+                                            title: "Quitar este efecto",
                                             onclick: {
                                                 let project = project.clone();
                                                 let monitor = monitor.clone();
@@ -556,9 +612,12 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                                             },
                                             "×"
                                         }
+                                        }
                                     }
                                     if card.params.is_empty() {
                                         div { class: "fx-noparams", "Sin ajustes" }
+                                    } else if !card.params.iter().any(|pv| effects::is_intensity(&pv.info.key)) {
+                                        div { class: "fx-noparams", "Este efecto no tiene control de intensidad; ajusta sus parámetros." }
                                     }
                                     for pv in card.params.iter() {
                                         {
@@ -587,7 +646,10 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                                             };
                                             rsx! {
                                                 div { class: "fx-param",
-                                                    label { class: "fx-param-label", "{p.label}" }
+                                                    label {
+                                                        class: if effects::is_intensity(&p.key) { "fx-param-label strong" } else { "fx-param-label" },
+                                                        if effects::is_intensity(&p.key) { "Intensidad" } else { "{p.label}" }
+                                                    }
                                                     match p.kind {
                                                         concat_effects::ParamType::Bool => rsx! {
                                                             button {

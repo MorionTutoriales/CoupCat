@@ -20,6 +20,8 @@ pub fn stage_panel(c: &Ctx) -> Element {
     let mut looping = c.looping;
     let mut stage_full = c.stage_full;
     let project = c.project.clone();
+    let mut dragging_fx = c.dragging_fx;
+    let ctx = c.clone();
 
     let on_playpause = {
         let monitor = monitor.clone();
@@ -93,7 +95,23 @@ pub fn stage_panel(c: &Ctx) -> Element {
                     }
                 }
             }
-            div { class: "stage-view",
+            div {
+                class: "stage-view",
+                onmouseup: move |_| {
+                    let Some(fx) = dragging_fx() else { return };
+                    dragging_fx.set(None);
+                    // The picture on top at the playhead takes the effect.
+                    let t = pos();
+                    let target = timeline()
+                        .clips
+                        .iter()
+                        .filter(|cl| (cl.kind == "video" || cl.kind == "image") && cl.start <= t && t < cl.start + cl.duration)
+                        .min_by_key(|cl| cl.track)
+                        .map(|cl| cl.id.clone());
+                    if let Some(id) = target {
+                        super::resources::apply_effect(&ctx, &id, &fx);
+                    }
+                },
                 match frame() {
                     Some(src) => rsx! { img { class: "frame", src: "{src}" } },
                     None => rsx! {

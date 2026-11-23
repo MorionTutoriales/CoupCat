@@ -374,13 +374,36 @@ fn text_content(c: &Ctx, cat: usize, q: &str) -> Element {
     }
 }
 
-/// The effect catalogue. Pressing a card applies it to the selected clip.
+/// Put catalogue effect `fx_id` on clip `clip_id`: one undoable edit. The clip
+/// becomes the selection and the inspector shows its Effects tab, so the new
+/// effect's settings are right there.
+pub fn apply_effect(c: &Ctx, clip_id: &str, fx_id: &str) {
+    let mut timeline = c.timeline;
+    let mut selected = c.selected;
+    let mut insp_tab = c.insp_tab;
+    effects::add(&mut c.project.borrow_mut(), clip_id, fx_id);
+    timeline.set(editor::view(&c.project.borrow()));
+    if let Some(d) = monitor::timeline_data(&c.project.borrow()) {
+        c.monitor.send(Cmd::SetTimeline(d));
+    }
+    selected.set(Some(clip_id.to_string()));
+    // The colour panel is edited in Ajustes, every other effect in Efectos.
+    insp_tab.set(if fx_id == effects::ADJUST_ID {
+        super::inspector::InspTab::Adjust
+    } else {
+        super::inspector::InspTab::Effects
+    });
+}
+
+/// The effect catalogue. Pressing a card applies it to the selected clip;
+/// dragging one onto a clip (or the player) applies it there.
 fn effects_content(c: &Ctx, cat: usize, q: &str) -> Element {
     let project = c.project.clone();
     let monitor = c.monitor.clone();
     let fx_catalogue = c.fx_catalogue.clone();
     let selected = c.selected;
     let mut timeline = c.timeline;
+    let mut dragging_fx = c.dragging_fx;
 
     let sel = selected();
     let items: Vec<&effects::EffectInfo> = fx_catalogue
@@ -402,8 +425,12 @@ fn effects_content(c: &Ctx, cat: usize, q: &str) -> Element {
                 for fx in items.iter() {
                     div {
                         key: "{fx.id}",
-                        class: if sel.is_some() { "card" } else { "card disabled" },
-                        title: "{fx.name}",
+                        class: if dragging_fx().as_deref() == Some(fx.id.as_str()) { "card dragging" } else { "card" },
+                        title: "{fx.name}: clic para aplicar al clip seleccionado, o arrástralo sobre un clip",
+                        onmousedown: {
+                            let fxid = fx.id.clone();
+                            move |_| dragging_fx.set(Some(fxid.clone()))
+                        },
                         onclick: {
                             let project = project.clone();
                             let monitor = monitor.clone();

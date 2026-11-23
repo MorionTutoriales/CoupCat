@@ -123,8 +123,8 @@ pub fn toolbar(c: &Ctx) -> Element {
 
     rsx! {
         div { class: "tl-toolbar",
-            button { class: "tool", disabled: !tl.can_undo, onclick: on_undo, title: "Deshacer", "↶" }
-            button { class: "tool", disabled: !tl.can_redo, onclick: on_redo, title: "Rehacer", "↷" }
+            button { id: "btn-undo", class: "tool", disabled: !tl.can_undo, onclick: on_undo, title: "Deshacer (Ctrl+Z)", "↶" }
+            button { id: "btn-redo", class: "tool", disabled: !tl.can_redo, onclick: on_redo, title: "Rehacer (Ctrl+Y)", "↷" }
             span { class: "tb-sep" }
             button { class: "tool", disabled: !has_clip, onclick: on_split, title: "Dividir en el cursor", "✂ Dividir" }
             button { class: "tool", disabled: !has_clip, onclick: on_delete, title: "Eliminar en el cursor (ripple)", "🗑 Eliminar" }

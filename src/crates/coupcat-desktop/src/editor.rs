@@ -1118,6 +1118,58 @@ mod inspector_tests {
         assert_eq!(ratio_id(1000, 900), "custom");
     }
 
+    #[test]
+    fn effects_toggle_reset_and_undo() {
+        let Some((mut ed, id, _)) = with_video() else {
+            return;
+        };
+        let fx = crate::effects::catalogue()
+            .into_iter()
+            .find(|e| {
+                crate::effects::params_of(&e.id)
+                    .iter()
+                    .any(|p| crate::effects::is_intensity(&p.key))
+            })
+            .expect("an effect with an intensity");
+        assert!(crate::effects::add(&mut ed, &id, &fx.id));
+        let key = crate::effects::params_of(&fx.id)
+            .into_iter()
+            .find(|p| crate::effects::is_intensity(&p.key))
+            .unwrap();
+        let v = if key.default < key.max {
+            key.max
+        } else {
+            key.min
+        };
+        assert!(crate::effects::set_param(&mut ed, &id, 0, &key.key, v));
+        assert_eq!(
+            crate::effects::effect_cards(&ed, &id)[0]
+                .params
+                .iter()
+                .find(|p| p.info.key == key.key)
+                .unwrap()
+                .current,
+            v
+        );
+        assert!(crate::effects::set_enabled(&mut ed, &id, 0, false));
+        assert!(!crate::effects::effect_cards(&ed, &id)[0].enabled);
+        assert!(!crate::effects::set_enabled(&mut ed, &id, 0, false));
+        ed.undo();
+        assert!(crate::effects::effect_cards(&ed, &id)[0].enabled);
+        assert!(crate::effects::reset_params(&mut ed, &id, 0));
+        let cur = crate::effects::effect_cards(&ed, &id)[0]
+            .params
+            .iter()
+            .find(|p| p.info.key == key.key)
+            .unwrap()
+            .current;
+        assert_eq!(cur, key.default);
+        ed.undo();
+        ed.undo();
+        ed.undo();
+        assert!(crate::effects::applied(&ed, &id).is_empty());
+    }
+
     /// Writes a project (a video and a title) for the UI tests to open:
     /// `COUPCAT_FIXTURE=<path> cargo test -p coupcat-desktop write_fixture -- --ignored`.
     #[test]

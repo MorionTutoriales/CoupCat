@@ -79,6 +79,7 @@ pub fn name_of(id: &str) -> String {
 #[derive(Clone, PartialEq)]
 pub struct Applied {
     pub index: usize,
+    pub enabled: bool,
     pub id: String,
     pub name: String,
 }
@@ -95,6 +96,7 @@ pub fn applied(editor: &Editor, clip_id: &str) -> Vec<Applied> {
                 .enumerate()
                 .map(|(i, f)| Applied {
                     index: i,
+                    enabled: f.enabled,
                     id: f.id.clone(),
                     name: name_of(&f.id),
                 })
@@ -176,6 +178,7 @@ pub struct ParamValue {
 #[derive(Clone, PartialEq)]
 pub struct EffectCard {
     pub index: usize,
+    pub enabled: bool,
     pub id: String,
     pub name: String,
     pub params: Vec<ParamValue>,
@@ -197,6 +200,7 @@ pub fn effect_cards(editor: &Editor, clip_id: &str) -> Vec<EffectCard> {
                 .collect();
             EffectCard {
                 index: a.index,
+                enabled: a.enabled,
                 id: a.id,
                 name: a.name,
                 params,
@@ -328,4 +332,35 @@ pub fn reset_adjust(editor: &mut Editor, clip_id: &str) -> bool {
         return false;
     }
     set(editor, clip_id.to_string(), list)
+}
+
+/// Bypass or re-enable the effect at `index`, keeping its settings.
+pub fn set_enabled(editor: &mut Editor, clip_id: &str, index: usize, enabled: bool) -> bool {
+    let mut list = current(editor, clip_id);
+    let Some(filter) = list.get_mut(index) else {
+        return false;
+    };
+    if filter.enabled == enabled {
+        return false;
+    }
+    filter.enabled = enabled;
+    set(editor, clip_id.to_string(), list)
+}
+
+/// Put every setting of the effect at `index` back to the catalogue's defaults.
+pub fn reset_params(editor: &mut Editor, clip_id: &str, index: usize) -> bool {
+    let mut list = current(editor, clip_id);
+    let Some(filter) = list.get_mut(index) else {
+        return false;
+    };
+    if filter.params.is_empty() {
+        return false;
+    }
+    filter.params.clear();
+    set(editor, clip_id.to_string(), list)
+}
+
+/// Whether a parameter is the effect's overall strength.
+pub fn is_intensity(key: &str) -> bool {
+    matches!(key, "amount" | "intensity" | "strength" | "mix")
 }

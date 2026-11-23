@@ -79,6 +79,8 @@ pub struct Ctx {
     pub media: Signal<Vec<editor::MediaView>>,
     /// The library item being dragged onto the timeline.
     pub dragging_media: Signal<Option<String>>,
+    /// Catalogue effect being dragged from the Effects tab onto a clip.
+    pub dragging_fx: Signal<Option<String>>,
     /// Bumped when a thumbnail arrives, to redraw the library.
     pub thumb_rev: Signal<u64>,
 
