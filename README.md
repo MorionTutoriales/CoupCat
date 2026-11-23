@@ -70,8 +70,8 @@ trabajar a la vez sin pisarse:
 | `ui/stage.rs` | Reproductor: vista previa, tiempo, reproducir y barra de búsqueda |
 | `ui/inspector/mod.rs` | Panel derecho: el inspector con pestañas según el tipo de clip (vídeo: Vídeo · Audio · Velocidad · Animación · Ajustes; imagen: Vídeo · Animación · Ajustes; audio: Audio · Velocidad; título: Texto · Animación) |
 | `ui/inspector/props.rs` | Pestañas de transformar, velocidad, animación (entrada/salida/combinada con fotogramas clave) y ajustes de color (`concat.adjust`) |
-| `ui/toolbar.rs` | Barra de herramientas de la línea de tiempo: deshacer, rehacer, dividir, eliminar y texto |
-| `ui/timeline.rs` | Línea de tiempo: regla, cabeceras de pista, pistas, clips y barra de estado |
+| `ui/toolbar.rs` | Barra de herramientas de la línea de tiempo: deshacer, rehacer, dividir, eliminar, texto, imán y zoom |
+| `ui/timeline.rs` | Línea de tiempo: regla con marcas adaptativas, zoom (Ctrl + rueda), imán al arrastrar/recortar, cabeceras de pista, pistas, clips y barra de estado |
 | `ui/files.rs` | Acciones de archivo: nuevo, abrir, guardar, recientes y recuperación |
 | `ui/style.css` | Todo el CSS |
 

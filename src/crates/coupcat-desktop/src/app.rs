@@ -64,6 +64,31 @@ pub fn app() -> Element {
     let mut timeline = use_signal(|| editor::view(&project.borrow()));
     // The resources panel: active tab, its category (0 is "Todo") and the search.
     let res_tab = use_signal(|| ResTab::Media);
+    let mut pps = use_signal(|| crate::ui::timeline::PPS_DEFAULT);
+    let snap = use_signal(|| true);
+    // Ctrl + wheel over the timeline zooms it around the cursor. Done in script
+    // so the page's own zoom can be refused; the scale lives here.
+    use_future(move || async move {
+        let mut ev = dioxus::document::eval(
+            r#"document.addEventListener('wheel', function(e){
+                if (!e.ctrlKey) return;
+                var sc = e.target.closest && e.target.closest('.tl-scroll');
+                if (!sc) return;
+                e.preventDefault();
+                var r = sc.getBoundingClientRect();
+                dioxus.send([e.deltaY, e.clientX - r.left, sc.scrollLeft]);
+            }, { passive: false });"#,
+        );
+        while let Ok((dy, x, scroll)) = ev.recv::<(f64, f64, f64)>().await {
+            let old = pps();
+            let new = crate::ui::timeline::clamp_pps(old * (-dy * 0.0015).exp());
+            if (new - old).abs() > 1e-9 {
+                let t = (scroll + x) / old;
+                pps.set(new);
+                let _ = dioxus::document::eval(&crate::ui::timeline::zoom_script(t, old, new, Some(x)));
+            }
+        }
+    });
     let insp_tab = use_signal(|| crate::ui::inspector::InspTab::Video);
     let anim_slot = use_signal(|| editor::AnimSlot::In);
     let res_cat = use_signal(|| 0usize);
@@ -409,6 +434,8 @@ pub fn app() -> Element {
         shortcuts_open,
         res_tab,
         insp_tab,
+        pps,
+        snap,
         anim_slot,
         res_cat,
         res_search,

@@ -6,12 +6,123 @@ use dioxus::prelude::*;
 
 use super::Ctx;
 use super::toolbar::toolbar;
-use crate::editor;
+use crate::editor::{self, TimelineView};
 use crate::monitor::{self, Cmd, fmt_time};
 use crate::peaks;
 
-/// Pixels per second on the timeline.
-pub const PPS: f64 = 50.0;
+/// Pixels per second on the timeline at the start, and the zoom's bounds
+/// (from a whole multi-hour project down to single frames).
+pub const PPS_DEFAULT: f64 = 50.0;
+pub const PPS_MIN: f64 = 1.0;
+pub const PPS_MAX: f64 = 800.0;
+
+/// How near (in pixels, whatever the zoom) an edge has to come to a snap
+/// target to be pulled onto it.
+pub const SNAP_PX: f64 = 8.0;
+
+/// Keep a zoom level inside its bounds.
+pub fn clamp_pps(pps: f64) -> f64 {
+    pps.clamp(PPS_MIN, PPS_MAX)
+}
+
+/// The zoom slider's 0..=100 position for a scale, and back (logarithmic, so
+/// each step feels like the same change).
+pub fn pps_to_slider(pps: f64) -> f64 {
+    (clamp_pps(pps) / PPS_MIN).ln() / (PPS_MAX / PPS_MIN).ln() * 100.0
+}
+
+pub fn slider_to_pps(v: f64) -> f64 {
+    clamp_pps(PPS_MIN * (PPS_MAX / PPS_MIN).powf(v.clamp(0.0, 100.0) / 100.0))
+}
+
+/// Script that, once the timeline has re-laid-out at the new scale, scrolls so
+/// that time `t` stays under the same screen x (`x`, or where it already is,
+/// or the middle when it is off screen).
+pub fn zoom_script(t: f64, old: f64, new: f64, x: Option<f64>) -> String {
+    let x = match x {
+        Some(x) => format!("{x}"),
+        None => format!(
+            "(function(){{var x={t}*{old}-s.scrollLeft;return (x<0||x>s.clientWidth)?s.clientWidth/2:x}})()"
+        ),
+    };
+    format!(
+        "(function(){{var s=document.querySelector('.tl-scroll');if(!s)return;var x={x};setTimeout(function(){{s.scrollLeft=Math.max(0,{t}*{new}-x)}},40)}})()"
+    )
+}
+
+/// The ruler's tick spacing for a scale: the major step in seconds (labelled,
+/// at least ~70 px apart) and the minor step between its ticks.
+pub fn ruler_steps(pps: f64) -> (f64, f64) {
+    const STEPS: [f64; 17] = [
+        0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0,
+        1800.0, 3600.0,
+    ];
+    let major = STEPS
+        .iter()
+        .copied()
+        .find(|s| s * pps >= 70.0)
+        .unwrap_or(7200.0);
+    let minor = major / 5.0;
+    if minor * pps >= 7.0 {
+        (major, minor)
+    } else {
+        (major, major)
+    }
+}
+
+/// A ruler label: `m:ss`, with decimals when the step is under a second.
+pub fn ruler_label(t: f64, major: f64) -> String {
+    if major >= 1.0 {
+        return fmt_time(t);
+    }
+    let m = (t / 60.0).floor() as i64;
+    format!("{m}:{:05.2}", t - m as f64 * 60.0)
+}
+
+/// Pull a drag onto the nearest snap target. `dsec` is the raw travel in
+/// seconds; returns the travel to use and, when it snapped, the time of the
+/// guide to draw. Targets are the start of the timeline, the playhead and the
+/// edges of every other clip; the edges that snap are the moving ones.
+pub fn snap_drag(
+    d: &Drag,
+    tl: &TimelineView,
+    playhead: f64,
+    pps: f64,
+    dsec: f64,
+) -> (f64, Option<f64>) {
+    let mut targets = vec![0.0, playhead];
+    for c in tl.clips.iter().filter(|c| c.id != d.clip_id) {
+        targets.push(c.start);
+        targets.push(c.start + c.duration);
+    }
+    let start = d.orig_start + dsec;
+    let end = d.orig_start + d.orig_dur + dsec;
+    let edges: &[f64] = match d.mode {
+        DragMode::Move => &[start, end],
+        DragMode::TrimStart => &[start],
+        DragMode::TrimEnd => &[end],
+    };
+    let threshold = SNAP_PX / pps;
+    let mut best: Option<(f64, f64)> = None; // (distance, shift)
+    for &edge in edges {
+        for &t in &targets {
+            let dist = (t - edge).abs();
+            if dist <= threshold && best.is_none_or(|(b, _)| dist < b) {
+                best = Some((dist, t - edge));
+            }
+        }
+    }
+    match best {
+        Some((_, shift)) => {
+            let guide = edges
+                .iter()
+                .map(|e| e + shift)
+                .find(|e| targets.iter().any(|t| (t - e).abs() < 1e-9));
+            (dsec + shift, guide)
+        }
+        None => (dsec, None),
+    }
+}
 
 /// Timeline panel height: tall enough for the toolbar, the ruler, the four
 /// starter lanes and the status bar; the user can drag it between these bounds.
@@ -75,6 +186,8 @@ pub fn timeline_panel(c: &Ctx) -> Element {
     let mut drop_lane = c.drop_lane;
     let wave_rev = c.wave_rev;
     let mut selected = c.selected;
+    let pps = (c.pps)();
+    let snap_on = (c.snap)();
 
     // Drop a library item onto a lane at a timeline position.
     let on_drop_media = {
@@ -177,7 +290,12 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                 if dpx.abs() < 2.0 && !changed_track {
                     return;
                 }
-                let dsec = dpx / PPS;
+                let raw = dpx / pps;
+                let dsec = if snap_on {
+                    snap_drag(&d, &timeline(), pos(), pps, raw).0
+                } else {
+                    raw
+                };
                 {
                     let mut ed = project.borrow_mut();
                     match d.mode {
@@ -221,9 +339,22 @@ pub fn timeline_panel(c: &Ctx) -> Element {
 
     let tl_seconds = tl.duration.max(dur()).max(10.0);
 
-    let tl_width = tl_seconds * PPS + 40.0;
+    let tl_width = tl_seconds * pps + 40.0;
 
-    let playhead_x = pos() * PPS;
+    let playhead_x = pos() * pps;
+
+    let (major, minor) = ruler_steps(pps);
+    let tick_count = (tl_seconds / minor).ceil() as i64;
+    let per_major = (major / minor).round() as i64;
+
+    // The snap guide of a drag in progress, in seconds.
+    let guide = match (drag_now.as_ref(), snap_on) {
+        (Some(d), true) => {
+            let raw = (d.cur_px - d.start_px) / pps;
+            snap_drag(d, &tl, pos(), pps, raw).1
+        }
+        _ => None,
+    };
 
     // Per-lane drawing state: lock/mute/hide and the CSS classes that show it.
     let locked_now = locked_tracks();
@@ -379,14 +510,14 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                             move |e: MouseEvent| {
                                 e.stop_propagation();
                                 scrubbing.set(true);
-                                monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                monitor.send(Cmd::Seek((e.element_coordinates().x / pps).max(0.0)));
                             }
                         },
                         onmousemove: {
                             let monitor = monitor.clone();
                             move |e: MouseEvent| {
                                 if scrubbing() {
-                                    monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                    monitor.send(Cmd::Seek((e.element_coordinates().x / pps).max(0.0)));
                                 }
                             }
                         },
@@ -403,13 +534,13 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                                 }
                             }
                         }
-                        for i in 0..=(tl_seconds.ceil() as i64) {
+                        for i in 0..=tick_count {
                             div {
                                 key: "tick-{i}",
-                                class: if i % 5 == 0 { "tick major" } else { "tick" },
-                                style: "left: {i as f64 * PPS}px;",
-                                if i % 5 == 0 {
-                                    span { class: "tick-label", "{fmt_time(i as f64)}" }
+                                class: if i % per_major == 0 { "tick major" } else { "tick" },
+                                style: "left: {i as f64 * minor * pps}px;",
+                                if i % per_major == 0 {
+                                    span { class: "tick-label", "{ruler_label(i as f64 * minor, major)}" }
                                 }
                             }
                         }
@@ -421,14 +552,14 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                                 let monitor = monitor.clone();
                                 move |e: MouseEvent| {
                                     scrubbing.set(true);
-                                    monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                    monitor.send(Cmd::Seek((e.element_coordinates().x / pps).max(0.0)));
                                 }
                             },
                             onmousemove: {
                                 let monitor = monitor.clone();
                                 move |e: MouseEvent| {
                                     if scrubbing() {
-                                        monitor.send(Cmd::Seek((e.element_coordinates().x / PPS).max(0.0)));
+                                        monitor.send(Cmd::Seek((e.element_coordinates().x / pps).max(0.0)));
                                     }
                                 }
                             },
@@ -442,16 +573,21 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                                 let track_ids = tl.track_ids.clone();
                                 move |e: MouseEvent| {
                                     if let Some(tid) = track_ids.get(lane).cloned() {
-                                        on_drop_media(tid, (e.element_coordinates().x / PPS).max(0.0));
+                                        on_drop_media(tid, (e.element_coordinates().x / pps).max(0.0));
                                     }
                                 }
                             },
                             {tl.clips.iter().filter(move |c| c.track == lane).map(|c| {
-                                        let mut left = c.start * PPS;
-                                        let mut width = (c.duration * PPS).max(3.0);
+                                        let mut left = c.start * pps;
+                                        let mut width = (c.duration * pps).max(3.0);
                                         if let Some(d) = drag_now.as_ref() {
                                             if d.clip_id == c.id {
-                                                let dpx = d.cur_px - d.start_px;
+                                                let raw = (d.cur_px - d.start_px) / pps;
+                                                let dpx = if snap_on {
+                                                    snap_drag(d, &tl, pos(), pps, raw).0 * pps
+                                                } else {
+                                                    d.cur_px - d.start_px
+                                                };
                                                 match d.mode {
                                                     DragMode::Move => left += dpx,
                                                     DragMode::TrimStart => { left += dpx; width -= dpx; }
@@ -522,6 +658,9 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                     if has_clip {
                         div { class: "tl-playhead", style: "left: {playhead_x}px;" }
                     }
+                    if let Some(g) = guide {
+                        div { class: "tl-snap", style: "left: {g * pps}px;" }
+                    }
                 }
             }
           }
@@ -552,5 +691,58 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn drag(mode: DragMode, start: f64, dur: f64) -> Drag {
+        Drag {
+            mode,
+            clip_id: "a".into(),
+            track_id: "t".into(),
+            orig_start: start,
+            orig_dur: dur,
+            start_px: 0.0,
+            cur_px: 0.0,
+        }
+    }
+
+    #[test]
+    fn ruler_steps_keep_labels_apart_at_any_zoom() {
+        for pps in [1.0, 2.0, 7.0, 50.0, 200.0, 800.0] {
+            let (major, minor) = ruler_steps(pps);
+            assert!(major * pps >= 70.0, "{pps}: {major}");
+            assert!(minor <= major);
+        }
+        assert_eq!(ruler_steps(50.0).0, 2.0);
+    }
+
+    #[test]
+    fn zoom_slider_round_trips() {
+        for pps in [1.0, 25.0, 50.0, 800.0] {
+            assert!((slider_to_pps(pps_to_slider(pps)) - pps).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn snapping_pulls_edges_within_the_pixel_threshold_at_any_zoom() {
+        let tl = TimelineView::default();
+        // Alone: only 0 and the playhead are targets. A move that leaves the
+        // clip's start 0.1 s from 0 snaps at 50 px/s (5 px) but not at 200.
+        let d = drag(DragMode::Move, 1.0, 2.0);
+        let (s, g) = snap_drag(&d, &tl, 10.0, 50.0, -0.9);
+        assert!((s + 1.0).abs() < 1e-9 && g == Some(0.0), "{s} {g:?}");
+        let (s, g) = snap_drag(&d, &tl, 10.0, 200.0, -0.9);
+        assert!((s + 0.9).abs() < 1e-9 && g.is_none());
+        // The end edge snaps to the playhead.
+        let (s, g) = snap_drag(&d, &tl, 5.0, 50.0, 1.95);
+        assert!((s - 2.0).abs() < 1e-9 && g == Some(5.0), "{s} {g:?}");
+        // A trim only snaps the edge it moves.
+        let t = drag(DragMode::TrimEnd, 1.0, 2.0);
+        let (s, _) = snap_drag(&t, &tl, 3.05, 50.0, 0.0);
+        assert!((s - 0.05).abs() < 1e-9);
     }
 }
