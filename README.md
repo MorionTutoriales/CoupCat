@@ -67,7 +67,7 @@ trabajar a la vez sin pisarse:
 | `ui/topbar.rs` | Barra superior: menú del proyecto, indicador de guardado, nombre del proyecto, atajos y exportar |
 | `ui/banners.rs` | Avisos bajo la barra y diálogos: recuperación, mensajes de archivo, cambios sin guardar, atajos, errores, progreso |
 | `ui/resources.rs` | Panel de recursos (izquierda): pestañas Importar, Audio, Texto, Efectos, Transiciones y Subtítulos, con categorías, buscador y tarjetas |
-| `ui/stage.rs` | Reproductor: vista previa, tiempo, reproducir y barra de búsqueda |
+| `ui/stage.rs` | Reproductor: vista previa, proporción del lienzo, tiempo, reproducir, bucle, pantalla completa y barra de búsqueda |
 | `ui/inspector/mod.rs` | Panel derecho: el inspector con pestañas según el tipo de clip (vídeo: Vídeo · Audio · Velocidad · Animación · Ajustes; imagen: Vídeo · Animación · Ajustes; audio: Audio · Velocidad; título: Texto · Animación) |
 | `ui/inspector/props.rs` | Pestañas de transformar, velocidad, animación (entrada/salida/combinada con fotogramas clave) y ajustes de color (`concat.adjust`) |
 | `ui/toolbar.rs` | Barra de herramientas de la línea de tiempo: deshacer, rehacer, dividir, eliminar, texto, imán y zoom |

@@ -1102,6 +1102,22 @@ mod inspector_tests {
         assert!(crate::effects::applied(&ed, &id).is_empty());
     }
 
+    #[test]
+    fn canvas_ratio_changes_the_frame_and_undoes() {
+        let mut ed = Editor::new();
+        let (w, h) = video_size(&ed);
+        assert_eq!(ratio_id(w, h), "16:9");
+        assert!(set_ratio(&mut ed, "9:16"));
+        assert_eq!(video_size(&ed), (1080, 1920));
+        assert_eq!(ratio_id(1080, 1920), "9:16");
+        assert!(!set_ratio(&mut ed, "9:16"), "no change is not an edit");
+        assert!(set_ratio(&mut ed, "1:1"));
+        assert_eq!(video_size(&ed), (1080, 1080));
+        ed.undo();
+        assert_eq!(video_size(&ed), (1080, 1920));
+        assert_eq!(ratio_id(1000, 900), "custom");
+    }
+
     /// Writes a project (a video and a title) for the UI tests to open:
     /// `COUPCAT_FIXTURE=<path> cargo test -p coupcat-desktop write_fixture -- --ignored`.
     #[test]
@@ -1112,4 +1128,51 @@ mod inspector_tests {
         crate::text::add_text(&mut ed, 0.0).unwrap();
         crate::project_file::save(&ed, std::path::Path::new(&out)).unwrap();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Canvas ratio
+// ---------------------------------------------------------------------------
+
+/// The canvas shapes the player offers: `(id, label, width, height)`, all
+/// 1080 on the short side.
+pub const RATIOS: &[(&str, &str, u32, u32)] = &[
+    ("16:9", "16:9", 1920, 1080),
+    ("9:16", "9:16", 1080, 1920),
+    ("1:1", "1:1", 1080, 1080),
+    ("4:3", "4:3", 1440, 1080),
+    ("3:4", "3:4", 1080, 1440),
+];
+
+/// The active timeline's frame size.
+pub fn video_size(editor: &Editor) -> (u32, u32) {
+    let v = editor.project().active().video;
+    (v.width, v.height)
+}
+
+/// The id of the canvas shape (see [`RATIOS`]) matching `(w, h)`, or "custom".
+pub fn ratio_id(w: u32, h: u32) -> &'static str {
+    RATIOS
+        .iter()
+        .find(|(_, _, rw, rh)| (w as u64) * (*rh as u64) == (h as u64) * (*rw as u64))
+        .map(|(id, ..)| *id)
+        .unwrap_or("custom")
+}
+
+/// Give the active timeline another canvas shape, keeping its frame rate.
+pub fn set_ratio(editor: &mut Editor, id: &str) -> bool {
+    let Some(&(_, _, width, height)) = RATIOS.iter().find(|(rid, ..)| *rid == id) else {
+        return false;
+    };
+    let timeline_id = editor.project().active().id.clone();
+    let mut video = editor.project().active().video;
+    if (video.width, video.height) == (width, height) {
+        return false;
+    }
+    video.width = width;
+    video.height = height;
+    editor
+        .apply(Command::SetTimelineVideo { timeline_id, video })
+        .map(|o| o.applied)
+        .unwrap_or(false)
 }

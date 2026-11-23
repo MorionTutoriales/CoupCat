@@ -479,3 +479,9 @@
         position: absolute; top: 24px; bottom: 0; width: 1px; background: #ffd400;
         box-shadow: 0 0 4px #ffd400; pointer-events: none; z-index: 7;
     }
+    .stage-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ratio-select { font-size: 11px; padding: 2px 6px; }
+    .stage-ctrl-end { display: flex; justify-content: flex-end; gap: 6px; }
+    .ctrl.sm { width: 30px; height: 30px; font-size: 14px; }
+    .ctrl.on { background: var(--accent-dim); box-shadow: inset 0 0 0 1px var(--accent); }
+    .stage.full { position: fixed; inset: 0; z-index: 100; border-radius: 0; background: #000; }
