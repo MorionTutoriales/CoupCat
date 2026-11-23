@@ -110,12 +110,30 @@ pub fn app() -> Element {
     let media = use_signal(Vec::<editor::MediaView>::new);
     // Media id being dragged from the library onto the timeline.
     let mut dragging_media = use_signal(|| None::<String>);
+    let mut dragging_fx = use_signal(|| None::<String>);
 
     // Spacebar toggles play/pause (unless typing in a field). Done in JS so it
     // works wherever focus is; it just clicks the transport button.
     use_future(|| async move {
         let _ = dioxus::document::eval(
             r#"document.addEventListener('keydown', function(e){
+if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+                    var kz = (e.key || '').toLowerCase();
+                    if (kz === 'z' || kz === 'y') {
+                        var a = document.activeElement;
+                        var tg = a ? a.tagName : '';
+                        var ty = a && a.type ? a.type : '';
+                        var typing = tg === 'TEXTAREA' ||
+                            (tg === 'INPUT' && ['text','search','number','tel','url','email','password'].indexOf(ty) >= 0);
+                        if (!typing) {
+                            e.preventDefault();
+                            var redo = kz === 'y' || (kz === 'z' && e.shiftKey);
+                            var ub = document.getElementById(redo ? 'btn-redo' : 'btn-undo');
+                            if (ub && !ub.disabled) ub.click();
+                            return;
+                        }
+                    }
+                }
                 if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
                     var k = (e.key || '').toLowerCase();
                     var id = k === 's' ? 'btn-save' : k === 'o' ? 'btn-open' : k === 'n' ? 'btn-new' : null;
@@ -420,6 +438,7 @@ pub fn app() -> Element {
         timeline,
         media,
         dragging_media,
+        dragging_fx,
         drag,
         drop_lane,
         wave_rev,
@@ -458,7 +477,7 @@ pub fn app() -> Element {
 
     rsx! {
         style { {STYLE} }
-        div { class: "app",
+        div { class: if dragging_fx().is_some() { "app fx-drag" } else { "app" },
             onmousemove: move |e: MouseEvent| {
                 if let Some((y0, h0)) = resizing() {
                     // The button was let go outside the window (no mouseup reached
@@ -476,6 +495,9 @@ pub fn app() -> Element {
             onmouseup: move |_| {
                 if dragging_media().is_some() {
                     dragging_media.set(None);
+                }
+                if dragging_fx().is_some() {
+                    dragging_fx.set(None);
                 }
                 if scrubbing() {
                     scrubbing.set(false);

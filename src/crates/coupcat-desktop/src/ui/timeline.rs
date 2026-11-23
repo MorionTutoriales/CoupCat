@@ -186,6 +186,8 @@ pub fn timeline_panel(c: &Ctx) -> Element {
     let mut drop_lane = c.drop_lane;
     let wave_rev = c.wave_rev;
     let mut selected = c.selected;
+    let mut dragging_fx = c.dragging_fx;
+    let c_ctx = c.clone();
     let pps = (c.pps)();
     let snap_on = (c.snap)();
 
@@ -641,6 +643,18 @@ pub fn timeline_panel(c: &Ctx) -> Element {
                                                 style: "left: {left}px; width: {width}px;",
                                                 title: "{c.name}",
                                                 onmousedown: mk(DragMode::Move),
+                                                onmouseup: {
+                                                    let cid = c.id.clone();
+                                                    let ctx = c_ctx.clone();
+                                                    let takes_fx = (c.kind == "video" || c.kind == "image") && !clip_locked;
+                                                    move |e: MouseEvent| {
+                                                        if let (true, Some(fx)) = (takes_fx, dragging_fx()) {
+                                                            e.stop_propagation();
+                                                            dragging_fx.set(None);
+                                                            super::resources::apply_effect(&ctx, &cid, &fx);
+                                                        }
+                                                    }
+                                                },
                                                 div { class: "handle hleft", onmousedown: mk(DragMode::TrimStart) }
                                                 if let Some(w) = wave.as_ref() {
                                                     div { class: "wave-wrap", dangerous_inner_html: "{w}" }
