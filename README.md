@@ -68,7 +68,8 @@ trabajar a la vez sin pisarse:
 | `ui/banners.rs` | Avisos bajo la barra y diálogos: recuperación, mensajes de archivo, cambios sin guardar, atajos, errores, progreso |
 | `ui/resources.rs` | Panel de recursos (izquierda): pestañas Importar, Audio, Texto, Efectos, Transiciones y Subtítulos, con categorías, buscador y tarjetas |
 | `ui/stage.rs` | Reproductor: vista previa, tiempo, reproducir y barra de búsqueda |
-| `ui/inspector.rs` | Panel derecho: texto, fondo (IA), subtítulos, audio, transiciones y efectos del clip |
+| `ui/inspector/mod.rs` | Panel derecho: el inspector con pestañas según el tipo de clip (vídeo: Vídeo · Audio · Velocidad · Animación · Ajustes; imagen: Vídeo · Animación · Ajustes; audio: Audio · Velocidad; título: Texto · Animación) |
+| `ui/inspector/props.rs` | Pestañas de transformar, velocidad, animación (entrada/salida/combinada con fotogramas clave) y ajustes de color (`concat.adjust`) |
 | `ui/toolbar.rs` | Barra de herramientas de la línea de tiempo: deshacer, rehacer, dividir, eliminar y texto |
 | `ui/timeline.rs` | Línea de tiempo: regla, cabeceras de pista, pistas, clips y barra de estado |
 | `ui/files.rs` | Acciones de archivo: nuevo, abrir, guardar, recientes y recuperación |

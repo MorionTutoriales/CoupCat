@@ -64,6 +64,8 @@ pub fn app() -> Element {
     let mut timeline = use_signal(|| editor::view(&project.borrow()));
     // The resources panel: active tab, its category (0 is "Todo") and the search.
     let res_tab = use_signal(|| ResTab::Media);
+    let insp_tab = use_signal(|| crate::ui::inspector::InspTab::Video);
+    let anim_slot = use_signal(|| editor::AnimSlot::In);
     let res_cat = use_signal(|| 0usize);
     let res_search = use_signal(String::new);
     // The imported-media library (bin).
@@ -406,6 +408,8 @@ pub fn app() -> Element {
         saved_at,
         shortcuts_open,
         res_tab,
+        insp_tab,
+        anim_slot,
         res_cat,
         res_search,
     };

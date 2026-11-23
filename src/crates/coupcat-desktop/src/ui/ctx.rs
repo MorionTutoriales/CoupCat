@@ -14,6 +14,7 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 
 use super::files::{Files, Pending};
+use super::inspector::InspTab;
 use super::resources::ResTab;
 use super::timeline::Drag;
 use crate::editor::{self, TimelineView};
@@ -64,6 +65,9 @@ pub struct Ctx {
     // ---- Resources panel (library, audio, titles, effects, transitions, captions)
     /// The active tab, its active category (0 is "Todo") and the search text.
     pub res_tab: Signal<ResTab>,
+    /// The inspector's active tab, and its animation slot (in / out / combined).
+    pub insp_tab: Signal<InspTab>,
+    pub anim_slot: Signal<editor::AnimSlot>,
     pub res_cat: Signal<usize>,
     pub res_search: Signal<String>,
     pub media: Signal<Vec<editor::MediaView>>,
