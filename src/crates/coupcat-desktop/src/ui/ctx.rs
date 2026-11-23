@@ -67,6 +67,9 @@ pub struct Ctx {
     pub res_tab: Signal<ResTab>,
     /// The inspector's active tab, and its animation slot (in / out / combined).
     pub insp_tab: Signal<InspTab>,
+    /// Timeline zoom in pixels per second, and whether edges snap while dragging.
+    pub pps: Signal<f64>,
+    pub snap: Signal<bool>,
     pub anim_slot: Signal<editor::AnimSlot>,
     pub res_cat: Signal<usize>,
     pub res_search: Signal<String>,
