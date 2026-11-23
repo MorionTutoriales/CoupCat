@@ -64,11 +64,12 @@ trabajar a la vez sin pisarse:
 | `main.rs` | Solo arranca la ventana (icono, tamaño, ONNX Runtime) |
 | `app.rs` | El componente raíz: crea el estado, lanza las tareas en segundo plano y compone las regiones |
 | `ui/ctx.rs` | `Ctx`: el estado compartido que leen y escriben las regiones |
-| `ui/topbar.rs` | Barra superior: proyecto, reproducción, herramientas de edición, exportar, importar |
-| `ui/banners.rs` | Avisos bajo la barra: recuperación, mensajes de archivo, cambios sin guardar, errores, progreso |
-| `ui/library.rs` | Librería de medios (izquierda) |
-| `ui/stage.rs` | Reproductor: vista previa y barra de búsqueda |
+| `ui/topbar.rs` | Barra superior: menú del proyecto, indicador de guardado, nombre del proyecto, atajos y exportar |
+| `ui/banners.rs` | Avisos bajo la barra y diálogos: recuperación, mensajes de archivo, cambios sin guardar, atajos, errores, progreso |
+| `ui/library.rs` | Librería de medios (izquierda), con el botón de importar |
+| `ui/stage.rs` | Reproductor: vista previa, tiempo, reproducir y barra de búsqueda |
 | `ui/inspector.rs` | Panel derecho: texto, fondo (IA), subtítulos, audio, transiciones y efectos del clip |
+| `ui/toolbar.rs` | Barra de herramientas de la línea de tiempo: deshacer, rehacer, dividir, eliminar y texto |
 | `ui/timeline.rs` | Línea de tiempo: regla, cabeceras de pista, pistas, clips y barra de estado |
 | `ui/files.rs` | Acciones de archivo: nuevo, abrir, guardar, recientes y recuperación |
 | `ui/style.css` | Todo el CSS |

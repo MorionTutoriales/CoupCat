@@ -90,4 +90,9 @@ pub struct Ctx {
     pub menu_open: Signal<bool>,
     /// True when the edit differs from the saved one.
     pub dirty: Memo<bool>,
+    /// Local time (`hh:mm:ss`) of the last save or autosave, for the top bar.
+    pub saved_at: Signal<Option<String>>,
+
+    // ---- Dialogs
+    pub shortcuts_open: Signal<bool>,
 }

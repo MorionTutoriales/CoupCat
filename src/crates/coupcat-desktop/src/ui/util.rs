@@ -5,6 +5,15 @@
 use crate::editor;
 use crate::thumbs;
 
+/// The local time as `hh:mm:ss`. Rust's standard library has no local time
+/// zone, so the webview (which does) is asked for it.
+pub async fn now_hms() -> Option<String> {
+    let mut ev = dioxus::document::eval(
+        "dioxus.send(new Date().toLocaleTimeString('es-ES', { hour12: false }))",
+    );
+    ev.recv::<String>().await.ok()
+}
+
 /// The library thumbnail for a bin item, once the background worker has made
 /// it. Audio has no picture and keeps its icon; so does anything still
 /// queued or that failed to decode.

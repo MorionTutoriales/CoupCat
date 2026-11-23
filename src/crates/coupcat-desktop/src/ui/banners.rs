@@ -19,9 +19,37 @@ pub fn banners(c: &Ctx) -> Element {
     let mut file_msg = c.file_msg;
     let mut recovery_offer = c.recovery_offer;
     let mut pending = c.pending;
+    let mut shortcuts_open = c.shortcuts_open;
     let dirty = c.dirty;
 
+    // The keyboard shortcuts the app has today, as `(keys, what it does)`.
+    const SHORTCUTS: &[(&str, &str)] = &[
+        ("Espacio", "Reproducir / pausar"),
+        ("Ctrl + N", "Proyecto nuevo"),
+        ("Ctrl + O", "Abrir proyecto"),
+        ("Ctrl + S", "Guardar"),
+    ];
+
     rsx! {
+        if shortcuts_open() {
+            div { class: "modal-back", onclick: move |_| shortcuts_open.set(false),
+                div { class: "modal", onclick: move |e: MouseEvent| e.stop_propagation(),
+                    div { class: "modal-title", "Atajos de teclado" }
+                    table { class: "kbd-table",
+                        for (keys, what) in SHORTCUTS.iter() {
+                            tr { key: "{keys}",
+                                td { span { class: "kbd", "{keys}" } }
+                                td { "{what}" }
+                            }
+                        }
+                    }
+                    div { class: "modal-btns",
+                        button { class: "tool", onclick: move |_| shortcuts_open.set(false), "Cerrar" }
+                    }
+                }
+            }
+        }
+
         if recovery_offer() {
             div { class: "recovery",
                 span { "Se encontró trabajo sin guardar de una sesión anterior." }
