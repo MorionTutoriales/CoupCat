@@ -7,7 +7,7 @@ pub mod banners;
 pub mod ctx;
 pub mod files;
 pub mod inspector;
-pub mod library;
+pub mod resources;
 pub mod stage;
 pub mod timeline;
 pub mod toolbar;

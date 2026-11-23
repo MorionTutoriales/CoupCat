@@ -19,6 +19,20 @@ pub const TL_HEIGHT_DEFAULT: f64 = 312.0;
 pub const TL_HEIGHT_MIN: f64 = 170.0;
 pub const TL_HEIGHT_MAX: f64 = 560.0;
 
+/// The timeline panel's height in pixels. Until the person drags its edge
+/// (custom is None) it follows the window: about 42 % of its height, so the
+/// player keeps room on a small window and the full default fits a normal one.
+/// Once dragged, the chosen height holds, kept below 70 % of the window.
+pub fn panel_height(custom: Option<f64>, window_h: f64) -> f64 {
+    match custom {
+        None => (window_h * 0.42).clamp(TL_HEIGHT_MIN, TL_HEIGHT_DEFAULT),
+        Some(h) => h
+            .clamp(TL_HEIGHT_MIN, TL_HEIGHT_MAX)
+            .min(window_h * 0.7)
+            .max(TL_HEIGHT_MIN),
+    }
+}
+
 /// What a timeline drag is doing to a clip.
 #[derive(Clone, Copy, PartialEq)]
 pub enum DragMode {
@@ -50,6 +64,7 @@ pub fn timeline_panel(c: &Ctx) -> Element {
     let dur = c.dur;
     let mut scrubbing = c.scrubbing;
     let tl_height = c.tl_height;
+    let win_h = c.win_h;
     let mut resizing = c.resizing;
     let mut locked_tracks = c.locked_tracks;
     let mut track_names = c.track_names;
@@ -254,13 +269,13 @@ pub fn timeline_panel(c: &Ctx) -> Element {
         .collect();
 
     rsx! {
-        footer { class: "timeline", style: "height: {tl_height()}px;",
+        footer { class: "timeline", style: "height: {panel_height(tl_height(), win_h())}px;",
           div {
               class: "tl-resizer",
               title: "Arrastra para cambiar la altura de la línea de tiempo",
               onmousedown: move |e: MouseEvent| {
                   e.stop_propagation();
-                  resizing.set(Some((e.page_coordinates().y, tl_height())));
+                  resizing.set(Some((e.page_coordinates().y, panel_height(tl_height(), win_h()))));
               },
           }
           {toolbar(c)}

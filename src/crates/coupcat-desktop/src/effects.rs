@@ -12,11 +12,39 @@ use concat_project::commands::ClipPatch;
 use concat_project::model::AppliedFilter;
 use concat_project::{Command, Editor};
 
+/// The categories the effects panel lists, after "Todo": a label in Spanish and
+/// the engine categories ("shelves") it gathers. The catalogue declares 34
+/// categories, several with one or two effects, so related ones share a group;
+/// the combined shelves ("Retro & Film", "Optical & Lens"…) are the engine's own.
+pub const CATEGORIES: &[(&str, &[&str])] = &[
+    ("Destacados", &["Featured"]),
+    ("Retro y cine", &["Retro & Film", "Movies"]),
+    ("Óptica y lentes", &["Optical & Lens"]),
+    ("Distorsión y glitch", &["Distortion & Glitch"]),
+    ("Fiesta y club", &["Party & Club", "Celebrate", "Vibe"]),
+    (
+        "Luz y sombra",
+        &["Light & Shadow", "Night", "Neon", "Sparkle"],
+    ),
+    ("Color", &["Color", "Black & White", "Adjust", "Basic"]),
+    ("Intro y cierre", &["Intro & Outro"]),
+    ("Cotidiano", &["Everyday", "Food", "Nature", "Scenery"]),
+    ("Retrato", &["Portrait", "Love", "Dreamy"]),
+    ("Estilizado", &["Stylize", "Stylised", "Comics", "Texture"]),
+    (
+        "Recortes y texto",
+        &["Cutout", "Text", "Split", "Screen", "Motion"],
+    ),
+];
+
 /// One effect the user can apply, from the catalogue.
 #[derive(Clone, PartialEq)]
 pub struct EffectInfo {
     pub id: String,
     pub name: String,
+    /// Indices into [`CATEGORIES`] this effect is listed under (may be empty:
+    /// it is then only under "Todo").
+    pub cats: Vec<usize>,
 }
 
 /// The visual effects and filters the built-in catalogue offers, by name.
@@ -27,6 +55,12 @@ pub fn catalogue() -> Vec<EffectInfo> {
         .map(|p| EffectInfo {
             id: p.id().to_string(),
             name: p.manifest.effect.name.clone(),
+            cats: CATEGORIES
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, shelves))| shelves.iter().any(|s| p.matches_category(s)))
+                .map(|(i, _)| i)
+                .collect(),
         })
         .collect();
     list.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -167,13 +201,7 @@ pub fn effect_cards(editor: &Editor, clip_id: &str) -> Vec<EffectCard> {
 }
 
 /// Set an effect's parameter on a clip.
-pub fn set_param(
-    editor: &mut Editor,
-    clip_id: &str,
-    index: usize,
-    key: &str,
-    value: f64,
-) -> bool {
+pub fn set_param(editor: &mut Editor, clip_id: &str, index: usize, key: &str, value: f64) -> bool {
     let mut list = current(editor, clip_id);
     let Some(filter) = list.get_mut(index) else {
         return false;

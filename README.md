@@ -66,7 +66,7 @@ trabajar a la vez sin pisarse:
 | `ui/ctx.rs` | `Ctx`: el estado compartido que leen y escriben las regiones |
 | `ui/topbar.rs` | Barra superior: menú del proyecto, indicador de guardado, nombre del proyecto, atajos y exportar |
 | `ui/banners.rs` | Avisos bajo la barra y diálogos: recuperación, mensajes de archivo, cambios sin guardar, atajos, errores, progreso |
-| `ui/library.rs` | Librería de medios (izquierda), con el botón de importar |
+| `ui/resources.rs` | Panel de recursos (izquierda): pestañas Importar, Audio, Texto, Efectos, Transiciones y Subtítulos, con categorías, buscador y tarjetas |
 | `ui/stage.rs` | Reproductor: vista previa, tiempo, reproducir y barra de búsqueda |
 | `ui/inspector.rs` | Panel derecho: texto, fondo (IA), subtítulos, audio, transiciones y efectos del clip |
 | `ui/toolbar.rs` | Barra de herramientas de la línea de tiempo: deshacer, rehacer, dividir, eliminar y texto |

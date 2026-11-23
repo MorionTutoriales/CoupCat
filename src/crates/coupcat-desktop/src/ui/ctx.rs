@@ -14,6 +14,7 @@ use std::rc::Rc;
 use dioxus::prelude::*;
 
 use super::files::{Files, Pending};
+use super::resources::ResTab;
 use super::timeline::Drag;
 use crate::editor::{self, TimelineView};
 use crate::monitor::Monitor;
@@ -43,7 +44,10 @@ pub struct Ctx {
     // ---- Timeline
     /// The edit as the interface draws it, refreshed after every command.
     pub timeline: Signal<TimelineView>,
-    pub tl_height: Signal<f64>,
+    /// The height the person gave the panel by dragging its edge (None: follow the window).
+    pub tl_height: Signal<Option<f64>>,
+    /// The window's inner height in pixels, kept up to date on resize.
+    pub win_h: Signal<f64>,
     /// A resize of the timeline panel in progress: (mouse y, height) at the start.
     pub resizing: Signal<Option<(f64, f64)>>,
     pub scrubbing: Signal<bool>,
@@ -57,7 +61,11 @@ pub struct Ctx {
     /// Bumped when waveform peaks arrive, to redraw the timeline.
     pub wave_rev: Signal<u64>,
 
-    // ---- Library
+    // ---- Resources panel (library, audio, titles, effects, transitions, captions)
+    /// The active tab, its active category (0 is "Todo") and the search text.
+    pub res_tab: Signal<ResTab>,
+    pub res_cat: Signal<usize>,
+    pub res_search: Signal<String>,
     pub media: Signal<Vec<editor::MediaView>>,
     /// The library item being dragged onto the timeline.
     pub dragging_media: Signal<Option<String>>,

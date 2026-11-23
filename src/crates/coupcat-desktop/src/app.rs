@@ -16,9 +16,9 @@ use crate::monitor::{self, Cmd, Monitor};
 use crate::ui::banners::banners;
 use crate::ui::files::{Files, Pending};
 use crate::ui::inspector::inspector_panel;
-use crate::ui::library::library_panel;
+use crate::ui::resources::{ResTab, resources_panel};
 use crate::ui::stage::stage_panel;
-use crate::ui::timeline::{Drag, TL_HEIGHT_DEFAULT, TL_HEIGHT_MAX, TL_HEIGHT_MIN, timeline_panel};
+use crate::ui::timeline::{Drag, TL_HEIGHT_MAX, TL_HEIGHT_MIN, timeline_panel};
 use crate::ui::topbar::topbar;
 use crate::ui::{Ctx, STYLE};
 use crate::{captions, cutout, effects, export, peaks, project_file, thumbs};
@@ -36,7 +36,17 @@ pub fn app() -> Element {
     let mut scrubbing = use_signal(|| false);
     // Height of the timeline panel in pixels (drag its top edge to change it),
     // and the in-progress resize: (mouse y at the start, height at the start).
-    let mut tl_height = use_signal(|| TL_HEIGHT_DEFAULT);
+    let mut tl_height = use_signal(|| None::<f64>);
+    // The window's height, kept up to date from the webview (see below).
+    let mut win_h = use_signal(|| 800.0_f64);
+    use_future(move || async move {
+        let mut ev = dioxus::document::eval(
+            "const send = () => dioxus.send(window.innerHeight); window.addEventListener('resize', send); send();",
+        );
+        while let Ok(h) = ev.recv::<f64>().await {
+            win_h.set(h);
+        }
+    });
     let mut resizing = use_signal(|| None::<(f64, f64)>);
     // Per-lane state the engine has no notion of (yet), keyed by track id:
     // locked lanes refuse edits, and lanes can carry a custom name. Not saved
@@ -52,6 +62,10 @@ pub fn app() -> Element {
     // Editor itself so a fresh project already shows (and can drop onto) its
     // lanes, instead of an empty view with no track ids.
     let mut timeline = use_signal(|| editor::view(&project.borrow()));
+    // The resources panel: active tab, its category (0 is "Todo") and the search.
+    let res_tab = use_signal(|| ResTab::Media);
+    let res_cat = use_signal(|| 0usize);
+    let res_search = use_signal(String::new);
     // The imported-media library (bin).
     let media = use_signal(Vec::<editor::MediaView>::new);
     // Media id being dragged from the library onto the timeline.
@@ -356,6 +370,7 @@ pub fn app() -> Element {
         playing,
         scrubbing,
         tl_height,
+        win_h,
         resizing,
         locked_tracks,
         track_names,
@@ -390,6 +405,9 @@ pub fn app() -> Element {
         dirty,
         saved_at,
         shortcuts_open,
+        res_tab,
+        res_cat,
+        res_search,
     };
 
     rsx! {
@@ -406,7 +424,7 @@ pub fn app() -> Element {
                     }
                     // The panel sits at the bottom, so dragging up makes it taller.
                     let h = (h0 + (y0 - e.page_coordinates().y)).clamp(TL_HEIGHT_MIN, TL_HEIGHT_MAX);
-                    tl_height.set(h);
+                    tl_height.set(Some(h));
                 }
             },
             onmouseup: move |_| {
@@ -423,7 +441,7 @@ pub fn app() -> Element {
             {topbar(&c)}
             {banners(&c)}
             div { class: "middle",
-                {library_panel(&c)}
+                {resources_panel(&c)}
                 {stage_panel(&c)}
                 {inspector_panel(&c)}
             }
