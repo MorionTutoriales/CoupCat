@@ -9,7 +9,7 @@ use super::Ctx;
 use super::util::color6;
 use crate::editor;
 use crate::monitor::{self, Cmd};
-use crate::{captions, cutout, effects, text};
+use crate::{cutout, effects, text};
 
 /// Built-in transition kinds the engine resolves on a cut: `(id, label)`.
 pub const TRANSITIONS: &[(&str, &str)] = &[
@@ -25,16 +25,12 @@ pub const TRANSITIONS: &[(&str, &str)] = &[
 pub fn inspector_panel(c: &Ctx) -> Element {
     let project = c.project.clone();
     let monitor = c.monitor.clone();
-    let fx_catalogue = c.fx_catalogue.clone();
     let mut timeline = c.timeline;
     let selected = c.selected;
     let mut cutout_job = c.cutout_job;
     let mut cutting = c.cutting;
     let mut cut_done = c.cut_done;
     let mut cut_total = c.cut_total;
-    let mut cc_job = c.cc_job;
-    let mut generating_cc = c.generating_cc;
-    let mut cc_stage = c.cc_stage;
 
     let on_cutout = {
         let project = project.clone();
@@ -62,24 +58,6 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                 timeline.set(editor::view(&project.borrow()));
                 if let Some(d) = monitor::timeline_data(&project.borrow()) {
                     monitor.send(Cmd::SetTimeline(d));
-                }
-            }
-        }
-    };
-
-    let on_captions = {
-        let project = project.clone();
-        move |_| {
-            if generating_cc() {
-                return;
-            }
-            if let Some(cid) = selected() {
-                let timing = editor::clip_timing(&project.borrow(), &cid);
-                let path = editor::media_path(&project.borrow(), &cid);
-                if let (Some((ss, dur, start)), Some(path)) = (timing, path) {
-                    cc_stage.set("extrayendo audio".to_string());
-                    generating_cc.set(true);
-                    cc_job.set(Some(captions::start(path, ss, dur, start)));
                 }
             }
         }
@@ -260,13 +238,6 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                             button { class: "tool", onclick: on_restore, "Restaurar fondo" }
                         } else {
                             button { class: "tool fx-cut", onclick: on_cutout, "✂ Quitar fondo (personas)" }
-                        }
-                        if captions::model_ready() {
-                            if generating_cc() {
-                                div { class: "cut-progress", "Subtítulos: {cc_stage()}…" }
-                            } else {
-                                button { class: "tool fx-cc", onclick: on_captions, "💬 Generar subtítulos" }
-                            }
                         }
                     }
                 }
@@ -449,7 +420,9 @@ pub fn inspector_panel(c: &Ctx) -> Element {
             div { class: "fx-head", "Efectos" }
             match selected_now.as_ref() {
                 None => rsx! {
-                    div { class: "fx-empty", "Selecciona un clip en el timeline para añadir filtros." }
+                    div { class: "fx-empty",
+                        "Selecciona un clip en la línea de tiempo para ver y editar sus efectos, su audio y su fondo."
+                    }
                 },
                 Some(_) => rsx! {
                     div { class: "fx-sel", "Clip: {selected_name.clone().unwrap_or_default()}" }
@@ -566,31 +539,8 @@ pub fn inspector_panel(c: &Ctx) -> Element {
                             }
                         }
                     }
-                    div { class: "fx-add-title", "Añadir efecto ({fx_catalogue.len()})" }
-                    div { class: "fx-list",
-                        for fx in fx_catalogue.iter() {
-                            button {
-                                key: "{fx.id}",
-                                class: "fx-item",
-                                onclick: {
-                                    let project = project.clone();
-                                    let monitor = monitor.clone();
-                                    let sel = selected_now.clone();
-                                    let fxid = fx.id.clone();
-                                    move |_| {
-                                        if let Some(cid) = &sel {
-                                            effects::add(&mut project.borrow_mut(), cid, &fxid);
-                                            timeline.set(editor::view(&project.borrow()));
-                                            if let Some(d) = monitor::timeline_data(&project.borrow()) {
-                                                monitor.send(Cmd::SetTimeline(d));
-                                            }
-                                        }
-                                    }
-                                },
-                                "{fx.name}"
-                            }
-                        }
-                    }
+                    // Adding effects lives in the resources panel's Effects tab; this
+                    // panel only edits the ones already on the clip.
                 },
             }
         }

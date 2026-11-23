@@ -16,7 +16,7 @@ use std::path::PathBuf;
 
 use concat_export::{ClipKind, ExportClip};
 use concat_project::commands::ClipPatch;
-use concat_project::model::{ClipKind as ModelClipKind, TextAlign, TextStyle};
+use concat_project::model::{ClipKind as ModelClipKind, TextAlign, TextCase, TextStyle};
 use concat_project::{Command, Editor};
 use concat_text::{Align, Fonts, PlateShape, TitleStyle};
 
@@ -133,20 +133,209 @@ fn title_style(style: &TextStyle) -> TitleStyle {
 
 /// Add a title at `start`, on a new lane above the picture. Returns its id.
 pub fn add_text(editor: &mut Editor, start: f64) -> Option<String> {
+    add_styled(editor, start, base("Texto"))
+}
+
+/// Add a title with this look at `start`, above the picture.
+fn add_styled(editor: &mut Editor, start: f64, style: TextStyle) -> Option<String> {
     editor
         .apply(Command::AddTextClip {
             track_id: None,
             above: true,
             start,
-            style: Some(TextStyle {
-                content: "Texto".to_string(),
-                ..TextStyle::default()
-            }),
+            style: Some(style),
             duration: Some(3.0),
             offset_y: None,
         })
         .ok()?
         .created_id
+}
+
+/// The default look with these words.
+fn base(content: &str) -> TextStyle {
+    TextStyle {
+        content: content.to_string(),
+        ..TextStyle::default()
+    }
+}
+
+/// A ready-made title look, offered as a card in the Text tab.
+pub struct Preset {
+    pub id: &'static str,
+    pub name: &'static str,
+    /// The group (category) it is listed under; one of [`PRESET_GROUPS`].
+    pub group: &'static str,
+    /// The words typed into the new title and shown on the card.
+    pub sample: &'static str,
+    /// An approximate look for the card, as CSS (the real look is `style`).
+    pub css: &'static str,
+    style: fn() -> TextStyle,
+}
+
+/// The groups the presets are listed under, after "Todo".
+pub const PRESET_GROUPS: &[&str] = &["Títulos", "Destacados"];
+
+/// The title looks offered in the Text tab. Each is a real `TextStyle`, using
+/// what the engine's title painter already draws (size, weight, outline,
+/// gradient, shadow and the bubble-shaped plates).
+pub const PRESETS: &[Preset] = &[
+    Preset {
+        id: "basic",
+        name: "Texto básico",
+        group: "Títulos",
+        sample: "Texto",
+        css: "color:#fff;font-weight:700;text-shadow:0 2px 6px rgba(0,0,0,.6)",
+        style: || base("Texto"),
+    },
+    Preset {
+        id: "big",
+        name: "Título grande",
+        group: "Títulos",
+        sample: "Título",
+        css: "color:#fff;font-weight:900;font-size:26px;text-shadow:0 2px 6px rgba(0,0,0,.6)",
+        style: || TextStyle {
+            font_size: 0.14,
+            font_weight: 900.0,
+            ..base("Título")
+        },
+    },
+    Preset {
+        id: "subtitle",
+        name: "Subtítulo",
+        group: "Títulos",
+        sample: "Subtítulo",
+        css: "color:#fff;font-weight:500;font-size:13px;background:rgba(0,0,0,.7);padding:2px 8px;border-radius:4px",
+        style: || TextStyle {
+            font_size: 0.05,
+            font_weight: 500.0,
+            shadow: false,
+            background: "#000000b3".to_string(),
+            ..base("Subtítulo")
+        },
+    },
+    Preset {
+        id: "outline",
+        name: "Con contorno",
+        group: "Títulos",
+        sample: "Contorno",
+        css: "color:#fff;font-weight:900;-webkit-text-stroke:1.5px #000",
+        style: || TextStyle {
+            font_weight: 900.0,
+            stroke_width: 0.008,
+            stroke_color: "#000000".to_string(),
+            ..base("Contorno")
+        },
+    },
+    Preset {
+        id: "caps",
+        name: "Mayúsculas",
+        group: "Títulos",
+        sample: "MAYÚSCULAS",
+        css: "color:#fff;font-weight:800;letter-spacing:2px;font-size:12px",
+        style: || TextStyle {
+            text_case: TextCase::Upper,
+            tracking: 0.01,
+            font_weight: 800.0,
+            ..base("Mayúsculas")
+        },
+    },
+    Preset {
+        id: "neon",
+        name: "Neón",
+        group: "Destacados",
+        sample: "Neón",
+        css: "background:linear-gradient(#19c4cf,#a24dff);-webkit-background-clip:text;color:transparent;font-weight:800;font-size:22px",
+        style: || TextStyle {
+            color: "#19c4cf".to_string(),
+            gradient: "#a24dff".to_string(),
+            font_weight: 800.0,
+            tracking: 0.004,
+            ..base("Neón")
+        },
+    },
+    Preset {
+        id: "comic",
+        name: "Cómic",
+        group: "Destacados",
+        sample: "¡Zas!",
+        css: "color:#ffd400;font-weight:900;font-style:italic;font-size:22px;-webkit-text-stroke:1.5px #111",
+        style: || TextStyle {
+            color: "#ffd400".to_string(),
+            font_size: 0.11,
+            font_weight: 900.0,
+            italic: true,
+            stroke_width: 0.012,
+            stroke_color: "#111111".to_string(),
+            ..base("¡Zas!")
+        },
+    },
+    Preset {
+        id: "speech",
+        name: "Globo de diálogo",
+        group: "Destacados",
+        sample: "Hola",
+        css: "color:#111;background:#fff;border:2px solid #111;border-radius:14px;padding:2px 12px;font-weight:700",
+        style: || TextStyle {
+            color: "#111111".to_string(),
+            font_size: 0.07,
+            shadow: false,
+            background: "#ffffff".to_string(),
+            background_shape: "speech".to_string(),
+            background_outline: "#111111".to_string(),
+            ..base("Hola")
+        },
+    },
+    Preset {
+        id: "tag",
+        name: "Etiqueta",
+        group: "Destacados",
+        sample: "Etiqueta",
+        css: "color:#04262b;background:#19c4cf;border-radius:4px 12px 12px 4px;padding:2px 12px;font-weight:700",
+        style: || TextStyle {
+            color: "#04262b".to_string(),
+            font_size: 0.06,
+            shadow: false,
+            background: "#19c4cf".to_string(),
+            background_shape: "tag".to_string(),
+            ..base("Etiqueta")
+        },
+    },
+    Preset {
+        id: "burst",
+        name: "Estallido",
+        group: "Destacados",
+        sample: "¡Oferta!",
+        css: "color:#111;background:#ffd400;border-radius:50%;padding:6px 10px;font-weight:900;font-size:13px",
+        style: || TextStyle {
+            color: "#111111".to_string(),
+            font_size: 0.07,
+            font_weight: 900.0,
+            shadow: false,
+            background: "#ffd400".to_string(),
+            background_shape: "burst".to_string(),
+            ..base("¡Oferta!")
+        },
+    },
+    Preset {
+        id: "banner",
+        name: "Banner",
+        group: "Destacados",
+        sample: "Banner",
+        css: "color:#fff;background:#e5384f;padding:2px 14px;font-weight:700",
+        style: || TextStyle {
+            font_size: 0.06,
+            shadow: false,
+            background: "#e5384f".to_string(),
+            background_shape: "banner".to_string(),
+            ..base("Banner")
+        },
+    },
+];
+
+/// Add the title look `preset_id` at `start`. Returns the new clip's id.
+pub fn add_preset(editor: &mut Editor, start: f64, preset_id: &str) -> Option<String> {
+    let preset = PRESETS.iter().find(|p| p.id == preset_id)?;
+    add_styled(editor, start, (preset.style)())
 }
 
 /// The text style of a clip, if it is a title.
