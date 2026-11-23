@@ -18,7 +18,7 @@
 
 [env]
 # FFmpeg shared dev build (BtbN), with include/ + lib/ (MSVC .lib import libs).
-FFMPEG_DIR = "D:/Proyectos/Claude/CapCraft/third_party/ffmpeg/ffmpeg-master-latest-win64-gpl-shared"
+FFMPEG_DIR = "D:/Proyectos/Claude/CoupCat/third_party/ffmpeg/ffmpeg-master-latest-win64-gpl-shared"
 # libclang for bindgen (ffmpeg-sys). Doxygen's; it finds system headers via the
 # Dev Shell's INCLUDE (MSVC's stddef.h etc.), so no extra clang args are needed.
 LIBCLANG_PATH = "C:/Program Files/doxygen/bin"
