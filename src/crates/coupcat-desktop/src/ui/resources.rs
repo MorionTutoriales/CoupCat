@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 
+use super::recorder;
 use super::Ctx;
 use super::inspector::TRANSITIONS;
 use super::util::{dur_label, kind_icon, library_thumb};
@@ -245,6 +246,7 @@ fn media_content(c: &Ctx, audio_only: bool, cat: usize, q: &str) -> Element {
     let timeline = c.timeline;
     let error = c.error;
     let mut dragging_media = c.dragging_media;
+    let ctx = c.clone();
 
     let all = media();
     let items: Vec<&MediaView> = all
@@ -285,6 +287,15 @@ fn media_content(c: &Ctx, audio_only: bool, cat: usize, q: &str) -> Element {
                     spawn(import_dialog(project.clone(), media, timeline, error, exts, title));
                 },
                 "{button}"
+            }
+            if !audio_only {
+                button {
+                    id: "btn-record-media", class: "tool rec-open",
+                    title: "Grabar la pantalla y añadirla a la librería",
+                    onclick: move |_| recorder::open_dialog(&ctx),
+                    span { class: "rec-dot" }
+                    "Grabar pantalla"
+                }
             }
         }
         if items.is_empty() {

@@ -15,6 +15,7 @@ use dioxus::prelude::*;
 
 use super::files::{Files, Pending};
 use super::inspector::InspTab;
+use super::recorder::Recorder;
 use super::resources::ResTab;
 use super::timeline::Drag;
 use crate::editor::{self, TimelineView};
@@ -112,6 +113,9 @@ pub struct Ctx {
     pub dirty: Memo<bool>,
     /// Local time (`hh:mm:ss`) of the last save or autosave, for the top bar.
     pub saved_at: Signal<Option<String>>,
+
+    // ---- Screen recorder
+    pub rec: Recorder,
 
     // ---- Dialogs
     pub shortcuts_open: Signal<bool>,

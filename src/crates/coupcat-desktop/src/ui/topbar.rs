@@ -7,6 +7,7 @@ use dioxus::prelude::*;
 
 use super::Ctx;
 use super::files::Pending;
+use super::recorder;
 use crate::{export, project_file};
 
 pub fn topbar(c: &Ctx) -> Element {
@@ -24,6 +25,7 @@ pub fn topbar(c: &Ctx) -> Element {
     let mut shortcuts_open = c.shortcuts_open;
     let saved_at = c.saved_at;
     let dirty = c.dirty;
+    let ctx = c.clone();
 
     let on_export = {
         let project = project.clone();
@@ -139,6 +141,14 @@ pub fn topbar(c: &Ctx) -> Element {
                                 }
                             },
                             span { "Guardar como…" }
+                        }
+                        button {
+                            id: "btn-record", class: "menu-item",
+                            onclick: move |_| {
+                                menu_open.set(false);
+                                recorder::open_dialog(&ctx);
+                            },
+                            span { "● Grabar pantalla…" }
                         }
                         div { class: "menu-sep", "Proyectos recientes" }
                         if recent_list.is_empty() {

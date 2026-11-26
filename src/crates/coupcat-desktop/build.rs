@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 //! Copy the runtime dependencies next to the built exe, so `cargo run` and the
-//! packaged build both find them without hand-copying: the FFmpeg shared DLLs,
+//! packaged build both find them without hand-copying: FFmpeg (DLLs and program),
 //! ONNX Runtime (loaded dynamically for background removal), and the Whisper
 //! caption model. Sources live under `third_party/` (machine-local, gitignored).
 //! Idempotent: a file already present and up to date is left alone.
@@ -41,7 +41,9 @@ fn main() {
         if let Ok(entries) = fs::read_dir(&ffmpeg_bin) {
             for entry in entries.flatten() {
                 let p = entry.path();
-                if p.extension().and_then(|e| e.to_str()) == Some("dll") {
+                // ffmpeg.exe records the screen (see recorder.rs).
+                let program = p.file_name().is_some_and(|n| n == "ffmpeg.exe");
+                if program || p.extension().and_then(|e| e.to_str()) == Some("dll") {
                     copy_if_newer(&p, &profile_dir.join(p.file_name().unwrap()));
                 }
             }

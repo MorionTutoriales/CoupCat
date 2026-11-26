@@ -16,6 +16,7 @@ use crate::monitor::{self, Cmd, Monitor};
 use crate::ui::banners::banners;
 use crate::ui::files::{Files, Pending};
 use crate::ui::inspector::inspector_panel;
+use crate::ui::recorder::{Status, recorder_banner, recorder_dialog, use_recorder};
 use crate::ui::resources::{ResTab, resources_panel};
 use crate::ui::stage::stage_panel;
 use crate::ui::timeline::{Drag, TL_HEIGHT_MAX, TL_HEIGHT_MIN, timeline_panel};
@@ -357,6 +358,7 @@ if ((e.ctrlKey || e.metaKey) && !e.altKey) {
     // Local time of the last save or autosave, shown in the top bar.
     let saved_at = use_signal(|| None::<String>);
     let shortcuts_open = use_signal(|| false);
+    let rec = use_recorder();
     // True when the edit differs from the saved one. Recomputed only when the
     // timeline changes (not on every playback tick).
     let dirty = use_memo({
@@ -408,12 +410,15 @@ if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         }
     });
     // The window title names the project and marks unsaved changes.
+    let rec_status = rec.status;
     use_effect(move || {
         let name = project_path()
             .map(|p| project_file::name_of(&p))
             .unwrap_or_else(|| "Sin título".to_string());
         let mark = if dirty() { "● " } else { "" };
-        dioxus::desktop::window().set_title(&format!("{mark}{name} — CoupCat"));
+        // Seen on the taskbar while the window is minimised for a recording.
+        let live = if rec_status() == Status::Recording { "⏺ Grabando · " } else { "" };
+        dioxus::desktop::window().set_title(&format!("{live}{mark}{name} — CoupCat"));
     });
 
     // Everything the interface regions share.
@@ -473,6 +478,7 @@ if ((e.ctrlKey || e.metaKey) && !e.altKey) {
         anim_slot,
         res_cat,
         res_search,
+        rec,
     };
 
     rsx! {
@@ -508,12 +514,14 @@ if ((e.ctrlKey || e.metaKey) && !e.altKey) {
             },
             {topbar(&c)}
             {banners(&c)}
+            {recorder_banner(&c)}
             div { class: "middle",
                 {resources_panel(&c)}
                 {stage_panel(&c)}
                 {inspector_panel(&c)}
             }
             {timeline_panel(&c)}
+            {recorder_dialog(&c)}
         }
     }
 }

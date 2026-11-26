@@ -72,8 +72,13 @@ trabajar a la vez sin pisarse:
 | `ui/inspector/props.rs` | Pestañas de transformar, velocidad, animación (entrada/salida/combinada con fotogramas clave) y ajustes de color (`concat.adjust`) |
 | `ui/toolbar.rs` | Barra de herramientas de la línea de tiempo: deshacer, rehacer, dividir, eliminar, texto, imán y zoom |
 | `ui/timeline.rs` | Línea de tiempo: regla con marcas adaptativas, zoom (Ctrl + rueda), imán al arrastrar/recortar, cabeceras de pista, pistas, clips y barra de estado |
+| `ui/recorder.rs` | Grabador de pantalla: diálogo (pantalla, micrófono, fps, cursor, carpeta), barra de grabación e importación a la librería |
 | `ui/files.rs` | Acciones de archivo: nuevo, abrir, guardar, recientes y recuperación |
 | `ui/style.css` | Todo el CSS |
+
+El grabador (`recorder.rs`) usa el `ffmpeg.exe` que acompaña a la app: captura un
+monitor con `ddagrab` y el micrófono con DirectShow, escribe en MKV (legible aunque se
+interrumpa) y al detener lo convierte a MP4 en `Videos\CoupCat\Grabaciones`.
 
 Las demás piezas (`editor.rs`, `monitor.rs`, `effects.rs`, `text.rs`, `captions.rs`,
 `cutout.rs`, `export.rs`, `project_file.rs`…) son la lógica que la interfaz usa. Una región es

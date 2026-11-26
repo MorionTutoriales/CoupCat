@@ -171,7 +171,27 @@
         flex: 1; min-width: 0; height: 30px; border: none; outline: none; background: transparent;
         color: var(--text); font-size: 12px; user-select: text;
     }
-    .res-actions { flex: none; margin-bottom: 8px; }
+    .res-actions { flex: none; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+    .rec-open { display: flex; align-items: center; gap: 6px; }
+    .rec-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--danger); }
+    .rec-bar {
+        display: flex; align-items: center; gap: 10px; padding: 8px 16px; font-size: 13px;
+        background: #2b1c22; border-bottom: 1px solid #4a2733;
+    }
+    .rec-bar .spacer { flex: 1; }
+    .rec-bar .rec-dot { animation: rec-blink 1s steps(2, start) infinite; }
+    @keyframes rec-blink { to { opacity: .2; } }
+    .rec-stop { background: var(--danger); color: #fff; }
+    .rec-modal { width: 460px; max-height: 90vh; overflow-y: auto; }
+    .rec-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+    .rec-row > span:first-child { width: 92px; flex: none; color: var(--muted); }
+    .rec-row select {
+        flex: 1; min-width: 0; height: 30px; background: var(--panel); color: var(--text);
+        border: 1px solid var(--line); border-radius: var(--radius-sm);
+    }
+    .rec-folder { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+    .rec-check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; }
+    .rec-error { color: var(--danger); word-break: break-word; }
     .res-hint { flex: none; font-size: 11px; color: var(--muted); margin-bottom: 8px; line-height: 1.4; }
     .res-hint.warn { color: var(--warn); }
     .res-empty { padding: 18px 6px; font-size: 12px; color: var(--faint); line-height: 1.5; text-align: center; }
