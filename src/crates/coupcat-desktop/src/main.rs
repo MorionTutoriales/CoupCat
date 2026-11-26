@@ -19,6 +19,7 @@ mod export;
 mod monitor;
 mod peaks;
 mod project_file;
+mod recorder;
 mod text;
 mod thumbs;
 mod ui;

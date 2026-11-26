@@ -11,6 +11,15 @@ description = "CoupCat's desktop app: a Dioxus shell over the Concat engine (M1)
 name = "coupcat"
 path = "src/main.rs"
 
+# The screen recorder ties ffmpeg to the app's lifetime with a Windows job.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
 [build-dependencies]
 # Embed the app icon into the exe (shown in Explorer / the taskbar).
 winresource = "0.1"

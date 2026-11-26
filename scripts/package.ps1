@@ -27,6 +27,8 @@ Copy-Item (Join-Path $rel "coupcat.exe") $dist
 
 # FFmpeg shared DLLs.
 Copy-Item (Join-Path $tp "ffmpeg\ffmpeg-master-latest-win64-gpl-shared\bin\*.dll") $dist
+# FFmpeg program (screen recording).
+Copy-Item (Join-Path $tp "ffmpegfmpeg-master-latest-win64-gpl-sharedinfmpeg.exe") $dist
 # ONNX Runtime (background removal).
 Copy-Item (Join-Path $tp "onnxruntime\onnxruntime-win-x64-1.32.0\lib\onnxruntime.dll") $dist
 # Whisper caption model.
