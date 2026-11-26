@@ -10,7 +10,6 @@
 #![windows_subsystem = "windows"]
 
 mod app;
-mod audio;
 mod captions;
 mod cutout;
 mod editor;
@@ -18,6 +17,12 @@ mod effects;
 mod export;
 mod monitor;
 mod peaks;
+/// The engine's mixing playback, used for the preview's sound. Only this module
+/// of `concat-host` is needed, so it is compiled here rather than pulling in the
+/// whole host layer.
+#[path = "../../concat-host/src/playback.rs"]
+#[allow(dead_code)]
+mod playback;
 mod project_file;
 mod recorder;
 mod system_audio;

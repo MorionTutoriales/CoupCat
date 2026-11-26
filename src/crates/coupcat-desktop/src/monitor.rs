@@ -7,7 +7,12 @@
 //! `concat_export::preview_frame` (which decodes via a reader pool so scrubbing
 //! revisits are cache hits, and draws on the engine's shared headless wgpu
 //! compositor). It runs on its own thread; the UI polls [`Shared`].
+//!
+//! The sound is the engine's own playback ([`concat_host::playback`]): every
+//! audible clip mixed as the export mixes it, on whichever output device is the
+//! default. Its sample counter is the clock the picture follows.
 
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -17,7 +22,7 @@ use base64::Engine as _;
 use concat_core::frame::Frame;
 use concat_export::{ClipKind, ExportClip, PreviewFrameRequest};
 
-use crate::audio::AudioOut;
+use crate::playback::{self, Playback, PlaybackEvents};
 use concat_media::ReaderPool;
 use concat_project::Editor;
 use concat_project::model::ColorSpace;
@@ -28,6 +33,9 @@ const PREVIEW_W: u32 = 854;
 /// Reader-pool cache size and reader count.
 const CACHE_BYTES: usize = 192 * 1024 * 1024;
 const MAX_READERS: usize = 6;
+/// A sound clock that has not moved for this long is not running (no output
+/// device), and the picture keeps its own time instead.
+const STALLED: Duration = Duration::from_millis(600);
 
 /// The flattened timeline plus its frame format: everything the monitor needs
 /// to composite a frame at any instant.
@@ -122,7 +130,9 @@ pub fn timeline_data(editor: &Editor) -> Option<TimelineData> {
 
 fn run(rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>) {
     let pool = ReaderPool::new(CACHE_BYTES, MAX_READERS);
-    let mut audio = AudioOut::new();
+    let audio = Sound::start(shared.clone());
+    // The sound clock's last reading and when it last moved.
+    let mut heard = (0.0_f64, Instant::now());
     let mut data: Option<TimelineData> = None;
     let mut time = 0.0_f64;
     let mut playing = false;
@@ -146,39 +156,39 @@ fn run(rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>) {
             match cmd {
                 Cmd::SetTimeline(d) => {
                     time = time.clamp(0.0, d.duration.max(0.0));
-                    data = Some(d);
                     playing = false;
-                    stop_audio(&mut audio);
+                    audio.pause();
+                    audio.load(&d.clips);
+                    data = Some(d);
                     render(&pool, data.as_ref(), time, false, &shared);
                 }
                 Cmd::Seek(t) => {
                     if let Some(d) = data.as_ref() {
                         time = t.clamp(0.0, d.duration.max(0.0));
-                        if playing {
-                            start_audio(&mut audio, d, time);
-                        } else {
-                            stop_audio(&mut audio);
-                        }
+                        audio.seek(time);
+                        heard = (time, Instant::now());
                         render(&pool, data.as_ref(), time, false, &shared);
                     }
                 }
                 Cmd::Play => {
-                    if let Some(d) = data.as_ref() {
+                    if data.is_some() {
                         playing = true;
-                        start_audio(&mut audio, d, time);
+                        audio.play(time);
+                        heard = (time, Instant::now());
                     }
                 }
                 Cmd::SetLoop(on) => looping = on,
                 Cmd::Pause => {
                     playing = false;
-                    stop_audio(&mut audio);
+                    audio.pause();
                     set_playing(&shared, false);
                 }
                 Cmd::Clear => {
                     data = None;
                     time = 0.0;
                     playing = false;
-                    stop_audio(&mut audio);
+                    audio.pause();
+                    audio.load(&[]);
                     let mut s = shared.lock().unwrap();
                     s.frame = None;
                     s.pos = 0.0;
@@ -197,57 +207,94 @@ fn run(rx: Receiver<Cmd>, shared: Arc<Mutex<Shared>>) {
                 render(&pool, Some(d), time, true, &shared);
                 let fps = d.rate_num as f64 / d.rate_den.max(1) as f64;
                 let step = 1.0 / fps.max(1.0);
-                time += step;
+                if let Some(rest) = Duration::from_secs_f64(step).checked_sub(started.elapsed()) {
+                    thread::sleep(rest);
+                }
+                // Follow the sound: a slow frame is skipped over, not lagged.
+                match audio.position() {
+                    Some(at) if at != heard.0 => {
+                        heard = (at, Instant::now());
+                        time = at;
+                    }
+                    Some(_) if heard.1.elapsed() < STALLED => {}
+                    _ => time += started.elapsed().as_secs_f64().max(step),
+                }
                 if time >= d.duration && looping && d.duration > 0.0 {
                     time = 0.0;
-                    start_audio(&mut audio, d, time);
+                    audio.seek(time);
+                    heard = (time, Instant::now());
                 } else if time >= d.duration {
                     time = d.duration;
                     playing = false;
-                    stop_audio(&mut audio);
+                    audio.pause();
                     render(&pool, Some(d), time, false, &shared);
-                } else if let Some(rest) =
-                    Duration::from_secs_f64(step).checked_sub(started.elapsed())
-                {
-                    thread::sleep(rest);
                 }
             }
         }
     }
 }
 
-/// Stop any preview sound.
-fn stop_audio(audio: &mut Option<AudioOut>) {
-    if let Some(a) = audio.as_mut() {
-        a.stop();
+/// The preview's sound. Without it (its threads could not start) every call
+/// does nothing and the picture keeps its own time.
+struct Sound(Option<Arc<Playback>>);
+
+/// Playback problems reach the window like any other preview error.
+struct SoundEvents(Arc<Mutex<Shared>>);
+
+impl PlaybackEvents for SoundEvents {
+    fn position(&self, _seconds: f64) {}
+
+    fn error(&self, message: String) {
+        if let Ok(mut s) = self.0.lock() {
+            s.error = Some(format!("Audio: {message}"));
+            s.generation += 1;
+        }
     }
 }
 
-/// Play the sound of the clip audible at `time`, from its source position.
-fn start_audio(audio: &mut Option<AudioOut>, d: &TimelineData, time: f64) {
-    let Some(a) = audio.as_mut() else { return };
-    match audible_at(&d.clips, time) {
-        Some((path, source_start, volume)) => a.play(&path, source_start, volume),
-        None => a.stop(),
-    }
+/// Where the decoded sound is cached (the engine bounds its size).
+fn cache_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("CoupCat")
 }
 
-/// The clip audible at `time` (the first video/audio clip there with sound),
-/// as `(path, source position, volume)`.
-fn audible_at(clips: &[ExportClip], t: f64) -> Option<(String, f64, f32)> {
-    clips
-        .iter()
-        .find(|c| {
-            matches!(c.kind, ClipKind::Video | ClipKind::Audio)
-                && !c.muted
-                && c.has_audio != Some(false)
-                && t >= c.start
-                && t < c.start + c.duration
-        })
-        .map(|c| {
-            let into = c.source_start + (t - c.start) * c.speed;
-            (c.path.clone(), into, c.volume as f32)
-        })
+impl Sound {
+    fn start(shared: Arc<Mutex<Shared>>) -> Sound {
+        let events = Arc::new(SoundEvents(shared));
+        Sound(Playback::start(events).ok())
+    }
+
+    /// Replace what can be heard with the audible parts of `clips`.
+    fn load(&self, clips: &[ExportClip]) {
+        if let Some(p) = &self.0 {
+            p.set_clips(cache_dir(), playback::audible(clips));
+        }
+    }
+
+    fn play(&self, at: f64) {
+        if let Some(p) = &self.0 {
+            p.play(at);
+        }
+    }
+
+    fn pause(&self) {
+        if let Some(p) = &self.0 {
+            p.pause();
+        }
+    }
+
+    fn seek(&self, at: f64) {
+        if let Some(p) = &self.0 {
+            p.seek(at);
+        }
+    }
+
+    /// The sound clock, in timeline seconds.
+    fn position(&self) -> Option<f64> {
+        self.0.as_ref().map(|p| p.position_now())
+    }
 }
 
 /// Composite the frame at `time` and publish it.
@@ -346,5 +393,25 @@ pub fn fmt_time(secs: f64) -> String {
         format!("{h}:{m:02}:{s:02}.{cs:02}")
     } else {
         format!("{m}:{s:02}.{cs:02}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_audible_clip_is_heard_together() {
+        let mut one = ExportClip::blank(ClipKind::Video, 0.0, 5.0, 0);
+        one.path = "a.mp4".into();
+        let mut two = ExportClip::blank(ClipKind::Audio, 2.0, 5.0, 1);
+        two.path = "b.wav".into();
+        let mut silent = two.clone();
+        silent.muted = true;
+        let mut picture = one.clone();
+        picture.has_audio = Some(false);
+        let heard = playback::audible(&[one, two, silent, picture]);
+        let paths: Vec<&str> = heard.iter().map(|c| c.path.as_str()).collect();
+        assert_eq!(paths, ["a.mp4", "b.wav"]);
     }
 }

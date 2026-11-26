@@ -4,7 +4,8 @@ resolver = "3"
 # Concat engine crates (crates/concat-*). The two engine crates below are kept
 # for reference but excluded from the build — CoupCat does their jobs itself
 # (background removal via concat-vision directly; captions via whisper-rs):
-#   - crates/concat-host:   editor host/session layer (not used)
+#   - crates/concat-host:   editor host/session layer (not used, except its
+#                           playback.rs, compiled into coupcat-desktop)
 #   - crates/concat-speech: whisper.cpp + sherpa-onnx TTS (not used)
 members = ["crates/*"]
 exclude = [
