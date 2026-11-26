@@ -20,6 +20,7 @@ mod monitor;
 mod peaks;
 mod project_file;
 mod recorder;
+mod system_audio;
 mod text;
 mod thumbs;
 mod ui;
