@@ -31,6 +31,8 @@ pub struct Form {
     pub screen: usize,
     /// Index into the microphone list; `None` records without sound.
     pub mic: Option<usize>,
+    /// Record what the computer plays.
+    pub system: bool,
     pub fps: u32,
     pub cursor: bool,
     pub minimize: bool,
@@ -62,6 +64,7 @@ pub fn use_recorder() -> Recorder {
         form: use_signal(|| Form {
             screen: 0,
             mic: Some(0),
+            system: true,
             fps: 30,
             cursor: true,
             minimize: true,
@@ -151,6 +154,7 @@ async fn run_take(c: Ctx) {
     let settings = Settings {
         screen,
         mic: form.mic.and_then(|m| found.mics.get(m).cloned()),
+        system: form.system && found.system.is_some(),
         fps: form.fps,
         cursor: form.cursor,
     };
@@ -335,6 +339,18 @@ pub fn recorder_dialog(c: &Ctx) -> Element {
                     for (i, name) in d.mics.iter().enumerate() {
                         option { value: "{i}", selected: f.mic == Some(i), "{name}" }
                     }
+                }
+            }
+            label { class: "rec-check",
+                input {
+                    id: "rec-system", r#type: "checkbox",
+                    checked: f.system && d.system.is_some(),
+                    disabled: busy || d.system.is_none(),
+                    onchange: move |e: FormEvent| form.write().system = e.checked(),
+                }
+                match &d.system {
+                    Some(name) => rsx! { span { class: "rec-device", title: "{name}", "Grabar el audio del sistema ({name})" } },
+                    None => rsx! { span { "Audio del sistema: no hay dispositivo de salida" } },
                 }
             }
             label { class: "rec-row",

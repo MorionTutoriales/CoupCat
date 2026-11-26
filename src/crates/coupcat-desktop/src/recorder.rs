@@ -2,8 +2,11 @@
 //
 //! Screen recording (#51): the `ffmpeg.exe` shipped beside the app captures a
 //! monitor (`ddagrab`, Desktop Duplication) and, if asked, a microphone
-//! (DirectShow). The take is written as Matroska, which stays readable if the
-//! recording is cut short, and copied into an MP4 once it ends.
+//! (DirectShow) and the computer's own sound ([`system_audio`]). The take is
+//! written as Matroska, which stays readable if the recording is cut short,
+//! with each sound in its own track, and ffmpeg's log notes the wall-clock
+//! moment each source began. Once it ends it becomes an MP4: the picture is
+//! copied, and the sounds are lined up with it by those moments and mixed.
 
 use std::fs::{self, File};
 use std::io::Write;
@@ -11,6 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+use crate::system_audio;
 
 /// A monitor that can be captured: which graphics adapter drives it, its
 /// number on that adapter, and its size in physical pixels.
@@ -27,6 +32,8 @@ pub struct Screen {
 pub struct Devices {
     pub screens: Vec<Screen>,
     pub mics: Vec<String>,
+    /// The output device whose sound can be recorded, if there is one.
+    pub system: Option<String>,
 }
 
 /// One take's settings.
@@ -34,6 +41,8 @@ pub struct Devices {
 pub struct Settings {
     pub screen: Screen,
     pub mic: Option<String>,
+    /// Whether to record the computer's own sound.
+    pub system: bool,
     pub fps: u32,
     pub cursor: bool,
 }
@@ -44,6 +53,11 @@ const SOFTWARE: &str = "libx264";
 
 /// How long a new capture is watched for an immediate failure.
 const START_WATCH: Duration = Duration::from_millis(1800);
+/// How late DirectShow's samples are stamped, in seconds: its buffer has to
+/// fill first.
+const MIC_LATENCY: f64 = 0.05;
+/// The sample rate of the finished sound.
+const RATE: u32 = 48_000;
 /// How long ffmpeg gets to close the file after being told to stop.
 const STOP_WAIT: Duration = Duration::from_secs(30);
 
@@ -104,7 +118,11 @@ pub fn devices() -> Result<Devices, String> {
     if screens.is_empty() {
         return Err("No se encontró ninguna pantalla que se pueda capturar.".to_string());
     }
-    Ok(Devices { screens, mics })
+    Ok(Devices {
+        screens,
+        mics,
+        system: system_audio::device_name(),
+    })
 }
 
 fn probe_screen(adapter: u32, output: u32) -> Option<Screen> {
@@ -179,12 +197,19 @@ fn quality(encoder: &str) -> &'static [&'static str] {
     }
 }
 
-/// The ffmpeg arguments that record `settings` into `out`.
-fn capture_args(settings: &Settings, encoder: &str, out: &Path) -> Vec<String> {
+/// The ffmpeg arguments that record `settings` into `out`. `system` holds the
+/// input arguments of the computer's sound, when it is recorded.
+fn capture_args(
+    settings: &Settings,
+    system: Option<&[String]>,
+    encoder: &str,
+    out: &Path,
+) -> Vec<String> {
     let s = &settings.screen;
     let mut a: Vec<String> = vec![
+        // The log carries the starting moments `source_starts` reads.
         "-loglevel".into(),
-        "warning".into(),
+        "info".into(),
         "-y".into(),
         "-init_hw_device".into(),
         format!("d3d11va=d:{}", s.adapter),
@@ -193,23 +218,53 @@ fn capture_args(settings: &Settings, encoder: &str, out: &Path) -> Vec<String> {
     ];
     if let Some(mic) = &settings.mic {
         a.extend(
-            ["-f", "dshow", "-rtbufsize", "100M", "-audio_buffer_size", "50", "-i"]
-                .map(String::from),
+            [
+                "-use_wallclock_as_timestamps",
+                "1",
+                "-f",
+                "dshow",
+                "-rtbufsize",
+                "100M",
+                "-audio_buffer_size",
+                "50",
+                "-i",
+            ]
+            .map(String::from),
         );
         a.push(format!("audio={mic}"));
     }
-    // H.264 wants even sides, so an odd pixel is cropped away.
-    a.push("-filter_complex".into());
-    a.push(format!(
+    if let Some(input) = system {
+        a.extend_from_slice(input);
+    }
+    // H.264 wants even sides, so an odd pixel is cropped away. A copy of the
+    // first frame goes to the log stamped with the wall clock.
+    let mut filter = format!(
         "ddagrab=output_idx={}:framerate={}:draw_mouse={},hwdownload,format=bgra,\
-         crop=trunc(iw/2)*2:trunc(ih/2)*2,format=nv12[v]",
+         crop=trunc(iw/2)*2:trunc(ih/2)*2,format=nv12,split=2[v][first];\
+         [first]trim=end_frame=1,settb=1/1000000,setpts=RTCTIME,showinfo,nullsink",
         s.output,
         settings.fps,
         u8::from(settings.cursor),
-    ));
-    a.extend(["-map", "[v]"].map(String::from));
+    );
+    let mut tracks = Vec::new();
     if settings.mic.is_some() {
-        a.extend(["-map", "0:a", "-c:a", "aac", "-b:a", "192k"].map(String::from));
+        // Stretched as needed to follow the clock.
+        filter.push_str(&format!(";[0:a]aresample={RATE}:async=1000[m]"));
+        tracks.push("[m]");
+    }
+    if system.is_some() {
+        let index = u8::from(settings.mic.is_some());
+        filter.push_str(&format!(";[{index}:a]aresample={RATE}[s]"));
+        tracks.push("[s]");
+    }
+    a.push("-filter_complex".into());
+    a.push(filter);
+    a.extend(["-map", "[v]"].map(String::from));
+    for track in &tracks {
+        a.extend(["-map", track].map(String::from));
+    }
+    if !tracks.is_empty() {
+        a.extend(["-c:a", "aac", "-b:a", "192k"].map(String::from));
     }
     a.push("-c:v".into());
     a.push(encoder.into());
@@ -223,6 +278,79 @@ fn capture_args(settings: &Settings, encoder: &str, out: &Path) -> Vec<String> {
     a
 }
 
+/// The sounds in a take, in the order of its tracks.
+#[derive(Clone, Copy)]
+struct Sources {
+    mic: bool,
+    /// When the computer's sound began, in wall-clock microseconds.
+    system: Option<u128>,
+}
+
+/// For each sound track, how many seconds before the picture it began,
+/// according to ffmpeg's `log`. A moment the log lacks counts as no offset.
+fn leads(sources: Sources, log: &str) -> Vec<f64> {
+    // The copy of the first frame that `showinfo` describes.
+    let picture = number_after(log, "pts_time:");
+    let lead = |began: Option<f64>| match (picture, began) {
+        (Some(p), Some(b)) => p - b,
+        _ => 0.0,
+    };
+    let mut all = Vec::new();
+    if sources.mic {
+        // The microphone is the first input; its start is the arrival of its
+        // first samples, which waited for the device's buffer to fill.
+        let began = number_after(log, ", start: ").map(|t| t - MIC_LATENCY);
+        all.push(lead(began));
+    }
+    if let Some(epoch) = sources.system {
+        all.push(lead(Some(epoch as f64 / 1e6)));
+    }
+    all
+}
+
+/// The number that follows the first `label` in `log`.
+fn number_after(log: &str, label: &str) -> Option<f64> {
+    let rest = log.split_once(label)?.1.trim_start();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+/// The arguments that turn a take into the finished file, given how long before
+/// the picture each of its sounds began: each is cut or padded to start with the
+/// picture, and they are mixed at their own levels.
+fn finish_args(leads: &[f64]) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    if !leads.is_empty() {
+        let mut filter = String::new();
+        for (i, lead) in leads.iter().enumerate() {
+            let first = (lead * f64::from(RATE)).round() as i64;
+            filter.push_str(&format!(
+                "[0:a:{i}]aresample={RATE}:async=1:first_pts={first},asetpts=PTS-({first})[a{i}];"
+            ));
+        }
+        for i in 0..leads.len() {
+            filter.push_str(&format!("[a{i}]"));
+        }
+        if leads.len() > 1 {
+            filter.push_str(&format!(
+                "amix=inputs={}:duration=longest:dropout_transition=0:normalize=0[a]",
+                leads.len()
+            ));
+        } else {
+            filter.push_str("anull[a]");
+        }
+        a.extend(["-filter_complex".to_string(), filter]);
+    }
+    a.extend(["-map", "0:v", "-c:v", "copy"].map(String::from));
+    if !leads.is_empty() {
+        a.extend(["-map", "[a]", "-c:a", "aac", "-b:a", "192k", "-shortest"].map(String::from));
+    }
+    a.extend(["-movflags", "+faststart"].map(String::from));
+    a
+}
+
 /// A capture in progress. Dropping it stops ffmpeg and keeps the file.
 pub struct Recording {
     child: Child,
@@ -233,6 +361,9 @@ pub struct Recording {
     started: Instant,
     #[cfg(windows)]
     _job: Option<job::Job>,
+    /// Feeds ffmpeg the computer's sound; dropped after ffmpeg has ended.
+    _system: Option<system_audio::Capture>,
+    sources: Sources,
 }
 
 /// Start recording into `folder`, in a file named after `name`.
@@ -268,8 +399,14 @@ fn free_path(folder: &Path, name: &str) -> PathBuf {
 fn launch(settings: &Settings, encoder: &str, mkv: &Path) -> Result<Recording, String> {
     let log = mkv.with_extension("log");
     let log_file = File::create(&log).map_err(|e| format!("No se pudo escribir: {e}"))?;
+    let system = if settings.system {
+        Some(system_audio::Capture::open()?)
+    } else {
+        None
+    };
+    let input = system.as_ref().map(system_audio::Capture::input_args);
     let mut child = command()
-        .args(capture_args(settings, encoder, mkv))
+        .args(capture_args(settings, input.as_deref(), encoder, mkv))
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::from(log_file))
@@ -286,6 +423,11 @@ fn launch(settings: &Settings, encoder: &str, mkv: &Path) -> Result<Recording, S
         started: Instant::now(),
         #[cfg(windows)]
         _job,
+        sources: Sources {
+            mic: settings.mic.is_some(),
+            system: system.as_ref().map(system_audio::Capture::epoch),
+        },
+        _system: system,
     };
     while recording.started.elapsed() < START_WATCH {
         if let Some(why) = recording.failed() {
@@ -344,10 +486,12 @@ impl Recording {
             return Err(format!("No se grabó nada. {}", why.trim()));
         }
         let mp4 = self.mkv.with_extension("mp4");
+        let notes = fs::read(&self.log).unwrap_or_default();
+        let leads = leads(self.sources, &String::from_utf8_lossy(&notes));
         let converted = command()
             .args(["-loglevel", "error", "-y", "-i"])
             .arg(&self.mkv)
-            .args(["-map", "0", "-c", "copy", "-movflags", "+faststart"])
+            .args(finish_args(&leads))
             .arg(&mp4)
             .output()
             .is_ok_and(|o| o.status.success());
@@ -459,17 +603,43 @@ mod tests {
                 height: 1080,
             },
             mic: None,
+            system: false,
             fps: 60,
             cursor: false,
         };
-        let silent = capture_args(&s, SOFTWARE, Path::new("a.mkv")).join(" ");
+        let silent = capture_args(&s, None, SOFTWARE, Path::new("a.mkv")).join(" ");
         assert!(silent.contains("d3d11va=d:1"));
         assert!(silent.contains("framerate=60:draw_mouse=0"));
-        assert!(!silent.contains("dshow") && !silent.contains("0:a"));
+        assert!(!silent.contains("dshow") && !silent.contains("-c:a"));
         s.mic = Some("Mic".to_string());
-        let voiced = capture_args(&s, SOFTWARE, Path::new("a.mkv")).join(" ");
+        let voiced = capture_args(&s, None, SOFTWARE, Path::new("a.mkv")).join(" ");
         assert!(voiced.contains("-i audio=Mic"));
-        assert!(voiced.contains("-map 0:a -c:a aac"));
+        assert!(voiced.contains("-map [m] -c:a aac"));
+        let system = system_audio::input_args(48000, 5000);
+        let both = capture_args(&s, Some(&system), SOFTWARE, Path::new("a.mkv")).join(" ");
+        assert!(both.contains("-ar 48000 -ch_layout stereo -i tcp://127.0.0.1:5000"));
+        assert!(both.contains("[1:a]aresample") && both.contains("-map [m] -map [s]"));
+        s.mic = None;
+        let only = capture_args(&s, Some(&system), SOFTWARE, Path::new("a.mkv")).join(" ");
+        assert!(only.contains("[0:a]aresample") && !only.contains("[m]"));
+    }
+
+    #[test]
+    fn sounds_are_lined_up_with_the_picture() {
+        let log = "Input #0, dshow, from 'audio=x':\n  Duration: N/A, start: 100.250000, bitrate\n\
+                   [Parsed_showinfo_7 @ 1] n:   0 pts:100500000 pts_time:100.5   duration:1";
+        let both = Sources {
+            mic: true,
+            system: Some(100_000_000),
+        };
+        let found = leads(both, log);
+        assert!((found[0] - 0.30).abs() < 1e-9 && (found[1] - 0.50).abs() < 1e-9);
+        assert_eq!(leads(both, "nothing"), vec![0.0, 0.0]);
+        let two = finish_args(&found).join(" ");
+        assert!(two.contains("first_pts=14400") && two.contains("first_pts=24000"));
+        assert!(two.contains("amix=inputs=2"));
+        assert!(!finish_args(&[-0.1]).join(" ").contains("amix"));
+        assert!(!finish_args(&[]).join(" ").contains("-c:a"));
     }
 
     /// Records the first screen (and first microphone) for a few seconds and
@@ -485,6 +655,7 @@ mod tests {
             let settings = Settings {
                 screen: screen.clone(),
                 mic: found.mics.first().cloned(),
+                system: found.system.is_some(),
                 fps: 30,
                 cursor: true,
             };
@@ -500,6 +671,7 @@ mod tests {
             &Settings {
                 screen: found.screens[0].clone(),
                 mic: None,
+                system: true,
                 fps: 30,
                 cursor: true,
             },
