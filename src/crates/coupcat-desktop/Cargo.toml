@@ -11,10 +11,12 @@ description = "CoupCat's desktop app: a Dioxus shell over the Concat engine (M1)
 name = "coupcat"
 path = "src/main.rs"
 
-# The screen recorder ties ffmpeg to the app's lifetime with a Windows job.
+# The screen recorder ties ffmpeg to the app's lifetime with a Windows job;
+# playback asks for a fine timer.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
+  "Win32_Media",
   "Win32_Security",
   "Win32_System_JobObjects",
   "Win32_System_Threading",
@@ -36,13 +38,18 @@ base64 = "0.22"
 png = "0.17"
 # The UI polls the playback thread's shared snapshot on a timer.
 tokio = { version = "1", features = ["time"] }
-# Audio output for the preview (plays the audible clip's sound on play).
+# Preview playback, and the screen recorder's capture of the computer's sound.
 cpal = "0.16"
 # The engine.
 concat-core.workspace = true
 concat-media.workspace = true
 concat-project.workspace = true
 concat-export.workspace = true
+# What the engine's playback module needs (it is compiled into this crate; see
+# main.rs): disk-backed samples, the cached sound's settings and its log lines.
+memmap2 = "0.9"
+serde = { version = "1", features = ["derive"] }
+log = "0.4"
 concat-effects.workspace = true
 concat-text.workspace = true
 # Project files: the engine's document is JSON.
@@ -54,3 +61,6 @@ concat-vision = { workspace = true, features = ["infer"] }
 # MSVC toolchain). Used directly rather than via concat-speech to avoid its
 # concat-host + sherpa-onnx dependencies.
 whisper-rs = "0.16"
+
+[dev-dependencies]
+tempfile = "3"

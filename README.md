@@ -82,6 +82,10 @@ monitor con `ddagrab`, el micrófono con DirectShow y el audio del sistema con W
 aunque se interrumpa, y al detener alinea los sonidos con la imagen, los mezcla y deja
 un MP4 en `Videos\CoupCat\Grabaciones`.
 
+El sonido de la vista previa lo pone el reproductor del motor
+(`concat-host/src/playback.rs`, compilado dentro de la app): mezcla todos los clips
+audibles como la exportación, y su reloj es el que sigue la imagen.
+
 Las demás piezas (`editor.rs`, `monitor.rs`, `effects.rs`, `text.rs`, `captions.rs`,
 `cutout.rs`, `export.rs`, `project_file.rs`…) son la lógica que la interfaz usa. Una región es
 una función normal que recibe `&Ctx` y devuelve el `rsx!` de esa zona.
